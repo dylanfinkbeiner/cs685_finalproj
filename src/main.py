@@ -5,6 +5,8 @@ from tqdm import tqdm
 from collections import defaultdict
 import os
 
+from argparser import get_args
+
 DATA_DIR = '../pickled_data/'
 proto_tsv = '../protoroles_eng_pb_08302015.tsv'
 
@@ -59,37 +61,39 @@ def build_instance_list(df):
     return instances
 
 
-def main():
+def get_data(args):
     df = pd.read_csv(proto_tsv, sep='\t')
 
     # Sentences
     sent_ids = set(df['Sentence.ID'].tolist())
     print(f'There are {len(sent_ids)} unique sentences.')
     path = os.path.join(DATA_DIR, 'sents.pkl')
-    if os.path.exists(path):
+    sents_data = None
+    if os.path.exists(path) and not args.init_data:
         with open(path, 'rb') as f:
-            data = pickle.load(f)
+            sents_data = pickle.load(f)
     else:
         with open(path, 'wb') as f:
-            data = fetch_nltk_data(sent_ids)
-            pickle.dump(data, f)
+            sents_data = fetch_nltk_data(sent_ids)
+            pickle.dump(sents_data, f)
 
     # Instances
     path = os.path.join(DATA_DIR, 'instances.pkl')
-    if os.path.exists(path):
+    proto_instances = None
+    if os.path.exists(path) and not args.init_data:
         with open(path, 'rb') as f:
-            instances = pickle.load(f)
+            proto_instances = pickle.load(f)
     else:
         with open(path, 'wb') as f:
-            instances = build_instance_list(df)
-            pickle.dump(instances, f)
+            proto_instances = build_instance_list(df)
+            pickle.dump(proto_instances, f)
 
-    print(f'There are {sum([len(x) for x in instances.values()])} instances.')
+    print(f'There are {sum([len(x) for x in proto_instances.values()])} instances.')
 
 
     properties = set(df['Property'].tolist())
     print(f'There are {len(properties)} many properties')
-    for k, v in instances.items():
+    for k, v in proto_instances.items():
         for k2, v2 in v.items():
             for p in properties:
                 try:
@@ -106,8 +110,13 @@ def main():
     df6 = df4[df5.duplicated()]
     breakpoint()
 
-    return df, instances, data
+    return df, proto_instances, sents_data
 
 
 if __name__ == '__main__':
-    df = main()
+    args = get_args()
+
+    df, instances, sents = get_data(args)
+
+
+
