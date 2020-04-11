@@ -87,22 +87,20 @@ def main():
     print(f'There are {sum([len(x) for x in instances.values()])} instances.')
 
 
-    #properties = set(df['Property'].tolist())
-    #print(f'There are {len(properties)} many properties')
-    #for k, v in instances.items():
-    #    for k2, v2 in v.items():
-    #        for p in properties:
-    #            try:
-    #                assert p in v2
-    #            except Exception:
-    #                print(f'Uh oh! Missing {p}')
-    #                print(k2)
-    #                print(v2)
-    #                breakpoint()
+    properties = set(df['Property'].tolist())
+    print(f'There are {len(properties)} many properties')
+    for k, v in instances.items():
+        for k2, v2 in v.items():
+            for p in properties:
+                try:
+                    assert p in v2
+                except Exception:
+                    print(f'Uh oh! Missing {p}')
+                    print(k2)
+                    print(v2)
+                    breakpoint()
 
-    #df2 = df[['Sentence.ID', 'Pred.Token', 'Arg', 'Property']]
     df2 = df[['Sentence.ID', 'Pred.Token', 'Arg.Pos']]
-    #df3 = df2.drop_duplicates() # (9738, 3)
     df4 = df[~df2.duplicated()] # (9783, 10), property duplicates removed
     df5 = df4[['Sentence.ID', 'Pred.Token', 'Arg']]
     df6 = df4[df5.duplicated()]
