@@ -21,6 +21,7 @@ class TestTemplate(unittest.TestCase):
         self.assertTrue()
         self.assertEqual()
 
+        # A test to assert that every data point has an entry for each property
         properties = set(df['Property'].tolist())
         print(f'There are {len(properties)} many properties')
         for k, v in instances.items():
