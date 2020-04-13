@@ -14,13 +14,15 @@ SPLITS = ['train', 'dev', 'test']
 
 
 def get_pred_arg(pt, ptree):
-            pred = get_predicate(pt['Pred.Token'], ptree)
+    pred = get_predicate(pt['Pred.Token'], ptree)
 
-            arg = []
-            arg_height_pairs = [t.split(':') for t in pt['Arg.Pos'].split(',')]
-            for pair in arg_height_pairs:
-                arg_pos, height = [int(n) for n in arg_height_pairs[0]]
-                arg.extend(get_argument(arg_pos, height, ptree))
+    arg = []
+    arg_height_pairs = [t.split(':') for t in pt['Arg.Pos'].split(',')]
+    for pair in arg_height_pairs:
+        arg_pos, height = [int(n) for n in arg_height_pairs[0]]
+        arg.extend(get_argument(arg_pos, height, ptree))
+
+    return pred, arg
 
 
 def get_predicate(terminal_id, tree):
@@ -28,13 +30,7 @@ def get_predicate(terminal_id, tree):
 
 
 def get_argument(terminal_id, height, ptree):
-    # At least in theory, should be a list of all 
-    #terminals = list(ptree.subtrees(
-    #    filter=lambda x: len(list(x.subtrees())) == 1))
     terminals = get_terminals(ptree)
-    ''' An easy unit test would be to compare ptree.leaves() and [x.leaves() for
-        x in terminals
-    '''
 
     parent = terminals[terminal_id]
     if height > 0:
@@ -44,9 +40,13 @@ def get_argument(terminal_id, height, ptree):
     return parent.leaves()
 
 
-def get_terminals(ptree:ParentedTree):
-    return list(ptree.subtrees(
-        filter=lambda x: len(list(x.subtrees())) == 1))
+# NOTE Kind of a heuristic, seems to work fine though
+def get_terminals(ptree: ParentedTree) -> list:
+    terms = ptree.subtrees(filter=lambda x: len(list(x.subtrees())) == 1)
+    terms = list(terms)
+    assert len(ptree.leaves()) == len(terms) # Pull out to unit test?
+
+    return terms
 
 
 # Properties is just a list of proto-properties, for ease of work
@@ -65,11 +65,6 @@ def get_ins_outs(args, data_points, properties=None, trees=None):
 
     # Dict vectorizer?
     if args.xy == 'logreg': #XXX this is temporary, doesnt make sense
-        #v = DictVectorizer(sparse=False)
-        #counts = countify(normalized)
-        #vectorized = v.fit_transform(counts)
-        ## Turn into array so we can do fancy indexing to get top 10
-        #names = np.array(v.get_feature_names())
         for pt in data_points:
 
             # One training example per property
@@ -83,17 +78,8 @@ def get_ins_outs(args, data_points, properties=None, trees=None):
                     X_d['pred_lemma'] = pt['Roleset'].split('.')[0]
 
 
-                #X_d = {
-                #        'pred': pred, 
-                #        'arg': arg, 
-                #        'pb_arg': pt['Arg'],
-                #        'property': p
-                #        }
                 X.append(X_d)
                 y.append(pt[p]['binary'])
-
-
-
 
     return X, y
 
@@ -111,8 +97,13 @@ def add_pred_args(proto_instances, trees):
             pred, arg = get_pred_arg(pt, ptree)
 
             pt['pred_token'] = pred
-            pt['arg_tokens'] = args
+            pt['arg_tokens'] = arg
 
+    return
+
+
+def normalize(proto_instances, args):
+    # TODO
     return
 
 

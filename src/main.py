@@ -50,7 +50,6 @@ def get_data(args):
         with open(path, 'wb') as f:
             proto_instances, possible = data_utils.build_instance_list(df)
             data_utils.add_pred_args(proto_instances, sents_data['trees'])
-            breakpoint()
             pickle.dump((proto_instances, possible), f)
 
     num_instances = sum([len(x) for x in proto_instances.values()])
@@ -62,20 +61,11 @@ def get_data(args):
 if __name__ == '__main__':
     args = get_args()
 
-
-
+    # Things that do not change depending on experiment
     df, proto_instances, possible, sents = get_data(args)
 
-    # Get actual pred and arg tokens, then normalize data 
-    data_utils.normalize(proto_instances)
-
-    print('Got data.')
-
-    X,y = data_utils.get_ins_outs(proto_instances['train'], args,
-            sents['trees'])
-
-    breakpoint()
-
+    # Now normalize (which might be different per experiment)
+    data_utils.normalize(proto_instances, args)
 
     # Properties are listed in a particular order in SPRL paper
     properties = set(df['Property'].tolist())
@@ -84,6 +74,10 @@ if __name__ == '__main__':
     'created', 'destroyed', 'predicate_changed_argument', 'change_of_state', 
     'changes_possession', 'change_of_location', 'stationary', 'location_of_event', 
     'makes_physical_contact', 'manipulated_by_another']
+
+    # Get inputs and outputs for experiment
+    X,y = data_utils.get_ins_outs(proto_instances['train'], args,
+            properties=properties, trees=sents['trees'])
 
     # TODO Why are these numbers not matching the ones in SPRL paper?
     for prop in standard_order:
