@@ -1,6 +1,7 @@
 import os
 import numpy as np
 
+
 def evaluate(args, clf, X_test, y_test):
     if args.model_type == 'majority':
         preds = clf.predict(X_test)
@@ -30,3 +31,12 @@ def evaluate(args, clf, X_test, y_test):
             }
 
     return results
+
+
+def get_metrics(results):
+    p = results['tp'] / (results['tp'] + results['fp'])
+    r = results['tp'] / (results['tp'] + results['fn'])
+    F = (2*r*p) / (r+p)
+
+    return p, r , F
+

@@ -10,13 +10,21 @@ from sklearn.linear_model import LogisticRegression
 import numpy as np
 
 
+SPLITS = ['train', 'dev', 'test'] 
+
+
+def get_pred_arg(pt, ptree):
+            pred = get_predicate(pt['Pred.Token'], ptree)
+
+            arg = []
+            arg_height_pairs = [t.split(':') for t in pt['Arg.Pos'].split(',')]
+            for pair in arg_height_pairs:
+                arg_pos, height = [int(n) for n in arg_height_pairs[0]]
+                arg.extend(get_argument(arg_pos, height, ptree))
+
+
 def get_predicate(terminal_id, tree):
     return tree.leaves()[terminal_id]
-
-
-def get_terminals(ptree:ParentedTree):
-    return list(ptree.subtrees(
-        filter=lambda x: len(list(x.subtrees())) == 1))
 
 
 def get_argument(terminal_id, height, ptree):
@@ -36,7 +44,15 @@ def get_argument(terminal_id, height, ptree):
     return parent.leaves()
 
 
+def get_terminals(ptree:ParentedTree):
+    return list(ptree.subtrees(
+        filter=lambda x: len(list(x.subtrees())) == 1))
+
+
+# Properties is just a list of proto-properties, for ease of work
 def get_ins_outs(args, data_points, properties=None, trees=None):
+    possible_feats = ['pred_lemma_emb', 'pred_pos', 'arg_direction']
+
     X = []
     y = []
 
@@ -55,33 +71,49 @@ def get_ins_outs(args, data_points, properties=None, trees=None):
         ## Turn into array so we can do fancy indexing to get top 10
         #names = np.array(v.get_feature_names())
         for pt in data_points:
-            s_id = pt['Sentence.ID']
-            tree = trees[s_id]
-            ptree = ParentedTree.convert(tree)
 
-            pred = get_predicate(pt['Pred.Token'], tree)
-
-            arg = []
-            arg_height_pairs = [t.split(':') for t in pt['Arg.Pos'].split(',')]
-            for pair in arg_height_pairs:
-                arg_pos, height = [int(n) for n in arg_height_pairs[0]]
-                arg.extend(get_argument(arg_pos, height, ptree))
-            #arg = ' '.join(arg)
-
+            # One training example per property
             for p in properties:
-                d = {
-                        'pred': pred, 
-                        'pred_lemma': pt['Roleset'].split('.')[0],
-                        'arg': arg, 
-                        'pb_arg': pt['Arg'],
-                        'property': p
-                        }
-                X.append(d)
+                X_d = {}
+
+
+                # General stuff needed regardless of particular feats
+                
+                if 'pred_lemma' in args.features:
+                    X_d['pred_lemma'] = pt['Roleset'].split('.')[0]
+
+
+                #X_d = {
+                #        'pred': pred, 
+                #        'arg': arg, 
+                #        'pb_arg': pt['Arg'],
+                #        'property': p
+                #        }
+                X.append(X_d)
                 y.append(pt[p]['binary'])
+
+
 
 
     return X, y
 
+
+def add_pred_args(proto_instances, trees):
+
+    normalized = {}
+    # First, get the predicate and arg tokens
+    for split in SPLITS:
+        data_points = proto_instances[split]
+        for pt in data_points:
+            s_id = pt['Sentence.ID']
+            tree = trees[s_id]
+            ptree = ParentedTree.convert(tree)
+            pred, arg = get_pred_arg(pt, ptree)
+
+            pt['pred_token'] = pred
+            pt['arg_tokens'] = args
+
+    return
 
 
 def top_ten_logreg(clf, names):
@@ -91,3 +123,69 @@ def top_ten_logreg(clf, names):
     idx = np.argsort(coef)
     print(f'Top 10 personal: {names[idx][-10:]}')
     print(f'Top 10 impersonal: {names[idx][:10]}')
+    
+
+def get_nltk_sents(sent_ids):
+    raw = {}
+    tagged = {}
+    trees = {}
+    data = {}
+
+    for i in tqdm(sent_ids, desc="Collecting sentences and trees"):
+        file_num, sent_num = i.split('_')
+        subdir = file_num[:2]
+        sent_num = int(sent_num)
+        path = f'WSJ/{subdir}/WSJ_{file_num}.MRG'
+        raw[i] = ptb.sents(path)[sent_num]
+        tagged[i] = ptb.tagged_sents(path)[sent_num]
+        trees[i] = ptb.parsed_sents(path)[sent_num]
+
+    data['raw'] = raw
+    data['tagged'] = tagged
+    data['trees'] = trees
+
+    return data
+
+
+def build_instance_list(df):
+    print(f'df has {df.shape[0]} entries')
+
+    instances = {name: dict() for name in SPLITS}
+
+    props = ['Response', 'Applicable']
+    cols = set(df.columns.tolist())
+    not_props = cols - set(props) - {'Property'}
+
+    properties = list(set(df['Property'].tolist()))
+    possible = {split:{p:0 for p in properties} for split in ['train', 'dev']}
+
+    for _, x in tqdm(df.iterrows(), desc='Processing proto-role data entries:'):
+        idstr = [x['Sentence.ID'], x['Pred.Token'], x['Arg'], x['Arg.Pos']]
+        idstr = '_'.join([str(n) for n in idstr])
+
+        # First time for this unique instance: populate
+        if idstr not in instances[x['Split']]:
+            d = {}
+            for col in not_props:
+                d[col] = x[col]
+            instances[x['Split']][idstr] = d
+
+        # Not first time: just retrieve
+        else:
+            d = instances[x['Split']][idstr]
+
+        d[x['Property']] = {p: x[p] for p in props}
+        binary_label = int(x['Applicable'] and (x['Response'] >= 4))
+        d[x['Property']]['binary'] = binary_label
+        
+        if binary_label == 1 and x['Split'] != 'test':
+            possible[x['Split']][x['Property']] += 1
+
+    # ID keys in instances serve no further purpose, listify
+    for split in SPLITS:
+        data_points = instances[split]
+        listified = sorted(data_points.items(), key=lambda x: x[0])
+        instances[split] = [x[1] for x in listified]
+
+    return instances, possible
+
