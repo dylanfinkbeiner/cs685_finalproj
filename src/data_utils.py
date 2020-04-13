@@ -3,6 +3,7 @@ from tqdm import tqdm
 from random import shuffle
 from nltk.corpus import ptb
 from nltk.tree import ParentedTree
+from typing import Tuple
 
 from sklearn.feature_extraction import DictVectorizer
 from sklearn.linear_model import LogisticRegression
@@ -17,12 +18,16 @@ def get_pred_arg(pt, ptree):
     pred = get_predicate(pt['Pred.Token'], ptree)
 
     arg = []
+    arg_idx = []
     arg_height_pairs = [t.split(':') for t in pt['Arg.Pos'].split(',')]
+    # Treats all cases, including discontiguous arguments
     for pair in arg_height_pairs:
-        arg_pos, height = [int(n) for n in arg_height_pairs[0]]
-        arg.extend(get_argument(arg_pos, height, ptree))
+        arg_id, height = [int(n) for n in arg_height_pairs[0]]
+        arg_ , arg_idx_ = get_argument(arg_id, height, ptree)
+        arg.extend(arg_)
+        arg_idx.extend(arg_idx_)
 
-    return pred, arg
+    return pred, arg, arg_idx
 
 
 def get_predicate(terminal_id, tree):
@@ -37,7 +42,20 @@ def get_argument(terminal_id, height, ptree):
         for _ in range(height):
             parent = parent.parent()
 
-    return parent.leaves()
+    arg_leaves = parent.leaves()
+    sent_leaves = ptree.leaves()
+
+    # Seems like a clunky way to get indices
+    arg_idx = []
+    j = 0
+    for i, leaf in enumerate(sent_leaves):
+        if leaf == arg_leaves[j]:
+            arg_idx.append(i)
+            j += 1
+        if j >= len(arg_leaves):
+            break
+
+    return arg_leaves, arg_idx
 
 
 # NOTE Kind of a heuristic, seems to work fine though
@@ -50,35 +68,45 @@ def get_terminals(ptree: ParentedTree) -> list:
 
 
 # Properties is just a list of proto-properties, for ease of work
-def get_ins_outs(args, data_points, properties=None, trees=None):
+def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
+        list]:
     possible_feats = ['pred_lemma_emb', 'pred_pos', 'arg_direction']
 
     X = []
     y = []
 
-    data_points = list(data_points.values())
-    if args.xy == 'minimal':
+    if args.model_type == 'majority':
         for pt in data_points:
             for p in properties:
                 X.append(p)
                 y.append(pt[p]['binary'])
-
-    # Dict vectorizer?
-    if args.xy == 'logreg': #XXX this is temporary, doesnt make sense
+    else:
         for pt in data_points:
-
             # One training example per property
             for p in properties:
                 X_d = {}
 
-
-                # General stuff needed regardless of particular feats
+                #for feat in args.features:
+                    #add_feature(feat, X_d, pt, sents)
                 
                 if 'pred_lemma' in args.features:
-                    X_d['pred_lemma'] = pt['Roleset'].split('.')[0]
+                    X_d['pred_lemma'] = pt['pred_lemma']
+                if 'pred_lemma_emb' in args.features:
+                    pass
+                if 'arg_direction' in args.features:
+                    if pt['Pred.Token'] < pt['arg_indices'][0]:
+                        X_d['arg_direction'] = 1
+                    elif pt['Pred.Token'] > pt['arg_indices'][0]:
+                        X_d['arg_direction'] = -1
+                    else:
+                        raise Exception
+                if 'arg_distance' in args.features:
+                    arg_idx = pt['arg_indices']
+                    arg_mid = (arg_idx[0] + arg_idx[-1]) / 2
+                    X_d['arg_distance'] = abs(arg_mid - float(pt['Pred.Token']))
 
 
-                X.append(X_d)
+                X.append((p, X_d)) # (property, feats)
                 y.append(pt[p]['binary'])
 
     return X, y
@@ -94,10 +122,11 @@ def add_pred_args(proto_instances, trees):
             s_id = pt['Sentence.ID']
             tree = trees[s_id]
             ptree = ParentedTree.convert(tree)
-            pred, arg = get_pred_arg(pt, ptree)
+            pred, arg, arg_idx = get_pred_arg(pt, ptree)
 
             pt['pred_token'] = pred
             pt['arg_tokens'] = arg
+            pt['arg_indices'] = arg_idx
 
     return
 
@@ -159,6 +188,10 @@ def build_instance_list(df):
             d = {}
             for col in not_props:
                 d[col] = x[col]
+
+            # Lemma contained in PropBank roleset
+            d['pred_lemma'] = x['Roleset'].split('.')[0]
+
             instances[x['Split']][idstr] = d
 
         # Not first time: just retrieve

@@ -75,10 +75,6 @@ if __name__ == '__main__':
     'changes_possession', 'change_of_location', 'stationary', 'location_of_event', 
     'makes_physical_contact', 'manipulated_by_another']
 
-    # Get inputs and outputs for experiment
-    X,y = data_utils.get_ins_outs(proto_instances['train'], args,
-            properties=properties, trees=sents['trees'])
-
     # TODO Why are these numbers not matching the ones in SPRL paper?
     for prop in standard_order:
         train = possible['train'][prop]
@@ -86,7 +82,29 @@ if __name__ == '__main__':
         print(f'{prop} -- Train: {train}, Dev: {dev}\n')
 
 
-    # TODO Messing around, this should be moved to train.py
+    X = {}
+    y = {}
+    for split in SPLITS:
+        X_split, y_split = data_utils.get_ins_outs(args, proto_instances[split],
+                properties=properties, sents=sents)
+        X[split] = X_split
+        y[split] = y_split
+
+    breakpoint()
+
+    # Lengths (in tokens) of arguments in test set
+    all_one_X = []
+    for s in X.values():
+        all_one_X.extend(s)
+    plt.hist([len(x['arg_tokens']) for x in all_one_X])
+
+    results = eval.evaluate(args, model, X_test, y_test)
+
+    # Setting up models and training, evaluating
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+
     if args.model_type == 'majority':
         model_path = os.path.join(MODEL_DIR, 'majority.pkl')
         if os.path.exists(model_path):
@@ -97,29 +115,6 @@ if __name__ == '__main__':
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
 
-
-    trees = sents['trees']
-    X = {}
-    y = {}
-    for split in SPLITS:
-        X_split, y_split = data_utils.get_ins_outs(args, proto_instances['split'],
-                properties=properties, trees=trees)
-        X['split'] = X_split
-        y['split'] = y_split
-
-
-    # Lengths (in tokens) of arguments in test set
-    all_one_X = []
-    for s in X.values():
-        all_one_X.append(s)
-    plt.hist([len(x['arg']) for x in all_one_X])
-
-    results = eval.evaluate(args, model, X_test, y_test)
-
-    # Setting up models and training, evaluating
-    random.seed(args.seed)
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
 
     print('End of main.')
     breakpoint()

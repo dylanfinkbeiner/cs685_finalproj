@@ -18,8 +18,8 @@ def get_args():
 
     parser.add_argument('-t', help='Type of model (glove, logreg, etc.)',
             default='majority', dest='model_type')
-    parser.add_argument('-xy', help='Input-output style',
-            default='minimal')
+    parser.add_argument('-ft', help='Features for training', dest='features',
+            default=[], nargs='+')
 
     parser.add_argument('-lr', help='Learning rate.', dest='lr', type=float, default=1e-3)
     parser.add_argument('-bs', help='Batch size.', type=int, dest='batch_size',
