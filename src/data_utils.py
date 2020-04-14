@@ -1,6 +1,8 @@
 from collections import defaultdict
+from collections import Counter
 from tqdm import tqdm
 from random import shuffle
+
 from nltk.corpus import ptb
 from nltk.tree import ParentedTree
 from typing import Tuple
@@ -9,7 +11,9 @@ from typing import Tuple
 import numpy as np
 
 
-SPLITS = ['train', 'dev', 'test'] 
+from names import *
+#SPLITS = ['train', 'dev', 'test'] 
+#GLOVE_PKL = '../pickled_data/glove.pkl'
 
 
 def get_pred_arg(pt, ptree):
@@ -79,9 +83,22 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
                 X.append(p)
                 y.append(pt[p]['binary'])
     else:
-        for pt in data_points:
-            # One training example per property
-            for p in properties:
+        if len(args.features) == 0:
+            print('Need to specify at least one feature.')
+            raise Exception
+        else:
+            if 'pred_emb' in args.features:
+                path = os.path.join(PICKLED_DIR, 'glove.pkl')
+                if os.path.exists(path) and not args.init_glove:
+                    with open(path, 'rb') as f:
+                        w2e = pickle.load(f)
+                else:
+                    w2e = w2e_from_file(os.path.join(GLOVE_FILE)
+                    with open(path, 'wb') as f:
+                        pickle.dump(w2e, f)
+
+            for pt in data_points:
+                # One training example per property
                 X_d = {}
 
                 #for feat in args.features:
@@ -90,7 +107,11 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
                 if 'pred_lemma' in args.features:
                     X_d['pred_lemma'] = pt['pred_lemma']
                 if 'pred_lemma_emb' in args.features:
-                    pass
+                    if pt['pred_lemma'] in w2e:
+                        X_d['pred_emb'] = w2e[pt['pred_lemma']]    
+                    else:
+                        print(f"No embedding for {pt['pred_lemma']}")
+                        raise Exception
                 if 'arg_direction' in args.features:
                     if pt['Pred.Token'] < pt['arg_indices'][0]:
                         X_d['arg_direction'] = 1
@@ -103,11 +124,49 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
                     arg_mid = (arg_idx[0] + arg_idx[-1]) / 2
                     X_d['arg_distance'] = abs(arg_mid - float(pt['Pred.Token']))
 
-
-                X.append((p, X_d)) # (property, feats)
-                y.append(pt[p]['binary'])
+                X.append(X_d) # (property, feats)
+                y.append({p:pt[p]['binary'] for p in properties})
 
     return X, y
+
+
+def unkify(X, cutoff=1):
+    features = set(X['train'][0].keys()) # X[0] should be as good as any other
+
+    X_train = X['train']
+    counts = get_counts(X_train)
+
+    #exceptions = {'arg_direction', 'arg_distance'}
+    # TODO Should define exceptions in terms of the data type of feat
+    exceptions = {'arg_direction', 'arg_distance'}
+    for split in SPLITS:
+        for pt in X[split]:
+            for f in features - exceptions: 
+                if counts[f][pt[f]] <= cutoff:
+                    pt[f] = f'<unk_{f}>'
+
+    return
+
+
+def get_counts(X):
+    features = X[0].keys() # X[0] should be as good as any other
+
+    counts = {} # {feature : Counter}
+    for f in features:
+        # Round up the set of all values feat takes on in train set
+        values = [pt[f] for pt in X]
+        counts[f] = Counter(values)
+
+    return counts
+
+
+def split_on_properties(y, properties=[]):
+    y_p = {p: list() for p in properties}
+    for y_curr in y:
+        for p in properties:
+            y_p[p].append(y_curr[p])
+
+    return y_p # y_p[p] = 9378-long list of labels
 
 
 def add_pred_args(proto_instances, trees):
@@ -212,18 +271,28 @@ def build_instance_list(df):
     return instances, possible
 
 
-def fetch_glove_data(args, w2i=None, i2w=None):
-    glove_data = None
-    
-    if os.path.exists(GLOVE_PKL) and not args.init_glove:
-        with open(GLOVE_PKL, 'rb') as pkl:
-            glove_data = pickle.load(pkl)
+def w2e_from_file(emb_file):
+    w2e = {}
 
-    else:
-        w2e = w2e_from_file(GLOVE_TXT)
-        glove_data = build_embedding_data(w2e, w2i=w2i, i2w=i2w)
-        with open(GLOVE_PKL, 'wb') as pkl:
-            pickle.dump(glove_data, pkl)
+    print(f'Building w2e from file: {emb_file}')
 
-    return glove_data
+    with open(emb_file, 'r', errors='ignore') as f:
+        lines = f.readlines()
+
+        if len(lines[0].split()) == 2:
+            lines.pop(0)
+
+        for i, line in tqdm(enumerate(lines), ascii=True, desc=f'w2e Progress', ncols=80):
+            #if i >= 200000:
+            if i >= 10000:
+                break
+            line = line.split()
+            word = line[0].lower()
+            try:
+                word_vector = [float(value) for value in line[1:]]
+                w2e[word] = word_vector
+            except Exception:
+                print(f'Word is: {word}, line is {i}')
+
+    return w2e
 

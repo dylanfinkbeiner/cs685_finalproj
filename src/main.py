@@ -8,22 +8,34 @@ import pandas as pd
 from nltk.corpus import ptb
 from nltk.tree import ParentedTree
 from matplotlib import pyplot as plt
+import torch
+import numpy as np
+from sklearn.feature_extraction import DictVectorizer
 
 from arg_parser import get_args
-from models import MajorityBaseline
+import models
 import data_utils
-import eval
+import evaluate
+import train
+
+from names import *
 
 # Want to figure out a way to define this once across all files
-SPLITS = ['train', 'dev', 'test'] 
-
-DATA_DIR = '../pickled_data/'
-MODEL_DIR = '../saved_models/'
-proto_tsv = '../protoroles_eng_pb_08302015.tsv'
-
+#SPLITS = ['train', 'dev', 'test'] 
+#
+#DATA_DIR = '../data/'
+#PICKLED_DIR = os.path.join(DATA_DIR, 'pickled')
+#MODEL_DIR = '../saved_models/'
+#PROTO_TSV = '../protoroles_eng_pb_08302015.tsv'
+#
+#PROPERTIES = ['instigation', 'volition', 'awareness', 'sentient',
+#'exists_as_physical', 'existed_before', 'existed_during', 'existed_after',
+#'created', 'destroyed', 'predicate_changed_argument', 'change_of_state', 
+#'changes_possession', 'change_of_location', 'stationary', 'location_of_event', 
+#'makes_physical_contact', 'manipulated_by_another']
 
 def get_data(args):
-    df = pd.read_csv(proto_tsv, sep='\t')
+    df = pd.read_csv(PROTO_TSV, sep='\t')
 
     # Sentences
     sent_ids = set(df['Sentence.ID'].tolist())
@@ -64,43 +76,28 @@ if __name__ == '__main__':
     df, proto_instances, possible, sents = get_data(args)
 
     # Now normalize (which might be different per experiment)
-    data_utils.normalize(proto_instances, args)
-
-    # Properties are listed in a particular order in SPRL paper
-    properties = set(df['Property'].tolist())
-    standard_order = ['instigation', 'volition', 'awareness', 'sentient',
-    'exists_as_physical', 'existed_before', 'existed_during', 'existed_after',
-    'created', 'destroyed', 'predicate_changed_argument', 'change_of_state', 
-    'changes_possession', 'change_of_location', 'stationary', 'location_of_event', 
-    'makes_physical_contact', 'manipulated_by_another']
+    #data_utils.normalize(proto_instances, args)
 
     # TODO Why are these numbers not matching the ones in SPRL paper?
-    for prop in standard_order:
-        train = possible['train'][prop]
-        dev = possible['dev'][prop]
-        print(f'{prop} -- Train: {train}, Dev: {dev}\n')
+    for p in PROPERTIES:
+        possible_train = possible['train'][p]
+        possible_dev = possible['dev'][p]
+        print(f'{p} -- Train: {possible_train}, Dev: {possible_dev}\n')
 
 
     X = {}
     y = {}
     for split in SPLITS:
         X_split, y_split = data_utils.get_ins_outs(args, proto_instances[split],
-                properties=properties, sents=sents)
+                properties=PROPERTIES, sents=sents)
         X[split] = X_split
         y[split] = y_split
-
     
 
     # Setting up models and training, evaluating
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-
-    #v = DictVectorizer(sparse=False)
-    #counts = countify(normalized)
-    #vectorized = v.fit_transform(counts)
-    ## Turn into array so we can do fancy indexing to get top 10
-    #names = np.array(v.get_feature_names())
 
     #presence = vectorized > 0
 
@@ -114,13 +111,50 @@ if __name__ == '__main__':
             with open(model_path, 'rb') as f:
                 model = pickle.load(f)
         else:
-            model = MajorityBaseline(proto_instances, properties)
+            model = models.MajorityBaseline(proto_instances, PROPERTIES)
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
     elif args.model_type == 'logreg':
-        model = LogReg(random_state=args.seed, solver='lbfgs', penalty='l2')
+        data_utils.unkify(X, cutoff=2)
 
-    results = eval.evaluate(args, model, X['test'], y['test'])
+        all_X = []
+        l_u = {}
+        l = 0
+        u = 0
+        for split in SPLITS:
+            all_X.extend(X[split])
+            u += len(X[split])
+            l_u[split] = (l, u)
+            l = u
+
+        v = DictVectorizer(sparse=False)
+        vectorized = v.fit_transform(all_X)
+        names = np.array(v.get_feature_names())
+
+        for split in SPLITS:
+            l, u = l_u[split]
+            X[split] = vectorized[l:u]
+
+        # Split up by proto role property
+        for split in SPLITS:
+            y_p = data_utils.split_on_properties(y[split], PROPERTIES)
+            y[split] = y_p
+
+        model = models.LogReg(
+                random_state=args.seed, 
+                solver='lbfgs', 
+                penalty='l2',
+                properties=PROPERTIES)
+
+    metrics = train.train(args, model, X, y, PROPERTIES)
+
+    for k, v in metrics.items():
+        print(f"{k}: F={v['F']:.2f}, p={v['precision']:.2f}, r={v['recall']:.2f}")
+
+    print('Finished training.')
+    breakpoint()
+
+    results = evaluate.evaluate(args, model, X['test'], y['test'])
 
     print('End of main.')
     breakpoint()

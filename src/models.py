@@ -12,22 +12,21 @@ from sklearn.feature_extraction import DictVectorizer
 from sklearn.linear_model import LogisticRegression
 
 
-class LogReg(LogisticRegression):
+class LogReg():
     def __init__(
             self,
             random_state=None,
             solver='lbfgs',
-            penalty='l2'):
-        super(LogReg, self).__init__(
-                random_state=random_state
-                solver=solver
-                penalty=penalty)
-        
-        #self.word_emb = nn.Embedding(
-        #        vocab_size,
-        #        emb_size,
-        #        padding_idx=padding_idx)
+            penalty='l2',
+            properties=None):
 
+        self.clfs = {}
+        for p in properties:
+            self.clfs[p] = LogisticRegression(
+                    random_state=random_state,
+                    solver=solver,
+                    penalty=penalty,
+                    max_iter=1000)
 
 
 class Glove_LogReg(nn.Module):
@@ -60,7 +59,6 @@ class Glove_LogReg(nn.Module):
         logits = self.logreg(avg) # (B, 2)
 
         return logits
-
 
 
 class MajorityBaseline():
