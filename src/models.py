@@ -8,26 +8,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_packed_sequence, \
         pack_padded_sequence, pad_sequence
+from sklearn.feature_extraction import DictVectorizer
+from sklearn.linear_model import LogisticRegression
 
 
-class LogReg(nn.Module):
-    def __init__(self):
-        super(LogReg, self).__init__()
-
-        self.word_emb = nn.Embedding(
-                vocab_size,
-                emb_size,
-                padding_idx=padding_idx)
-
-
-    def forward(self, inputs):
-        w_embs = self.word_emb(inputs) # (B, L, D)
-
-        avg = w_embs.mean(1) # (B, D)
-
-        logits = self.logreg(avg) # (B, 2)
-
-        return logits
+class LogReg(LogisticRegression):
+    def __init__(
+            self,
+            random_state=None,
+            solver='lbfgs',
+            penalty='l2'):
+        super(LogReg, self).__init__(
+                random_state=random_state
+                solver=solver
+                penalty=penalty)
+        
+        #self.word_emb = nn.Embedding(
+        #        vocab_size,
+        #        emb_size,
+        #        padding_idx=padding_idx)
 
 
 

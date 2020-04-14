@@ -46,20 +46,6 @@ def top_ten_glove(clf, names):
     print(f"Top 10 'p': {names[idx[1]][-10:]}")
 
 
-def fetch_glove_data(args, w2i=None, i2w=None):
-    glove_data = None
-    
-    if os.path.exists(GLOVE_PKL) and not args.init_glove:
-        with open(GLOVE_PKL, 'rb') as pkl:
-            glove_data = pickle.load(pkl)
-
-    else:
-        w2e = data_utils.w2e_from_file(GLOVE_TXT)
-        glove_data = data_utils.build_embedding_data(w2e, w2i=w2i, i2w=i2w)
-        with open(GLOVE_PKL, 'wb') as pkl:
-            pickle.dump(glove_data, pkl)
-
-    return glove_data
 
 
 # Turn normalized tweets into dicts containing tokens and counts
@@ -114,67 +100,9 @@ def unkify(normalized, new_w2i=None):
 
 
 def train(args, data=None):
-    normalized, labels = data
-
-    kf = KFold(n_splits=5)
-
-    # Seeding
-
     if args.model_type == 'logreg':
-
-
-        v = DictVectorizer(sparse=False)
-        counts = countify(normalized)
-        vectorized = v.fit_transform(counts)
-        # Turn into array so we can do fancy indexing to get top 10
-        names = np.array(v.get_feature_names())
-
-        presence = vectorized > 0
-
-        #X, y = vectorized, labels
-        X, y = presence, labels
-        clf_overall = LogisticRegression(
+                clf_overall = LogisticRegression(
                 random_state=args.seed, solver='lbfgs', penalty='l2').fit(X, y)
-        top_ten_logreg(clf_overall, names)
-
-        n_correct, tpp, fpp, fnp, tpi, fpi, fni= 0,0,0,0,0,0,0
-        precsp, recsp = [], []
-        precsi, recsi = [], []
-        for k, (train, test) in enumerate(kf.split(X)):
-            print(f'Fold {k}')
-            X_train, X_test = X[train], X[test]
-            y_train, y_test = y[train], y[test]
-            clf = LogisticRegression(random_state=args.seed, solver='lbfgs',
-                    penalty='l2').fit(X_train, y_train)
-            n_correct_, tpp_, fpp_, fnp_, tpi_, fpi_, fni_ = evaluate(args, clf, X_test, y_test)
-            n_correct += n_correct_
-            tpp += tpp_
-            fpp += fpp_
-            fnp += fnp_
-            tpi += tpi_
-            fpi += fpi_
-            fni += fni_
-            precsp.append(tpp_ / (tpp_ + fpp_))
-            recsp.append(tpp_ / (tpp_ + fnp_))
-            precsi.append(tpi_ / (tpi_ + fpi_))
-            recsi.append(tpi_ / (tpi_ + fni_))
-        
-        acc = n_correct / 250
-        precs_p = np.sum(precsp) / 5
-        recs_p = np.sum(recsp) / 5
-        precs_i = np.sum(precsi) / 5
-        recs_i = np.sum(recsi) / 5
-        precision_p = tpp / (tpp + fpp)
-        recall_p = tpp / (tpp + fnp)
-        precision_i = tpi / (tpi + fpi)
-        recall_i = tpi / (tpi + fni)
-        print(f'Accuracy {acc}\nPrecision p {precision_p}\nRecall p {recall_p}')
-        print(f'\nPrecision i {precision_i}\nRecall i {recall_i}')
-        breakpoint()
-
-
-        #TODO Report average across folds here?
-
 
     #elif args.model_type == 'glove':
     else:

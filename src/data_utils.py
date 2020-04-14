@@ -5,8 +5,6 @@ from nltk.corpus import ptb
 from nltk.tree import ParentedTree
 from typing import Tuple
 
-from sklearn.feature_extraction import DictVectorizer
-from sklearn.linear_model import LogisticRegression
 
 import numpy as np
 
@@ -212,4 +210,20 @@ def build_instance_list(df):
         instances[split] = [x[1] for x in listified]
 
     return instances, possible
+
+
+def fetch_glove_data(args, w2i=None, i2w=None):
+    glove_data = None
+    
+    if os.path.exists(GLOVE_PKL) and not args.init_glove:
+        with open(GLOVE_PKL, 'rb') as pkl:
+            glove_data = pickle.load(pkl)
+
+    else:
+        w2e = w2e_from_file(GLOVE_TXT)
+        glove_data = build_embedding_data(w2e, w2i=w2i, i2w=i2w)
+        with open(GLOVE_PKL, 'wb') as pkl:
+            pickle.dump(glove_data, pkl)
+
+    return glove_data
 

@@ -9,7 +9,7 @@ from nltk.corpus import ptb
 from nltk.tree import ParentedTree
 from matplotlib import pyplot as plt
 
-from argparser import get_args
+from arg_parser import get_args
 from models import MajorityBaseline
 import data_utils
 import eval
@@ -20,7 +20,6 @@ SPLITS = ['train', 'dev', 'test']
 DATA_DIR = '../pickled_data/'
 MODEL_DIR = '../saved_models/'
 proto_tsv = '../protoroles_eng_pb_08302015.tsv'
-
 
 
 def get_data(args):
@@ -90,21 +89,25 @@ if __name__ == '__main__':
         X[split] = X_split
         y[split] = y_split
 
-    breakpoint()
-
-    # Lengths (in tokens) of arguments in test set
-    all_one_X = []
-    for s in X.values():
-        all_one_X.extend(s)
-    plt.hist([len(x['arg_tokens']) for x in all_one_X])
-
-    results = eval.evaluate(args, model, X_test, y_test)
+    
 
     # Setting up models and training, evaluating
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
+    #v = DictVectorizer(sparse=False)
+    #counts = countify(normalized)
+    #vectorized = v.fit_transform(counts)
+    ## Turn into array so we can do fancy indexing to get top 10
+    #names = np.array(v.get_feature_names())
+
+    #presence = vectorized > 0
+
+    ##X, y = vectorized, labels
+    #X, y = presence, labels
+
+    model = None
     if args.model_type == 'majority':
         model_path = os.path.join(MODEL_DIR, 'majority.pkl')
         if os.path.exists(model_path):
@@ -114,7 +117,10 @@ if __name__ == '__main__':
             model = MajorityBaseline(proto_instances, properties)
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
+    elif args.model_type == 'logreg':
+        model = LogReg(random_state=args.seed, solver='lbfgs', penalty='l2')
 
+    results = eval.evaluate(args, model, X['test'], y['test'])
 
     print('End of main.')
     breakpoint()
