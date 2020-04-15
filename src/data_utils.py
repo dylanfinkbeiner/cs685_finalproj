@@ -61,14 +61,8 @@ def match_to_raw(raw, dependencies):
             if token != dep.word and token != dep.pos and (not '/' in token):
                 dependencies[sent_id].insert(i, token)
                 for j, t in enumerate(dependencies[sent_id]):
-                    try:
-                        if type(t) == Conll_Token:
-                            if t.head >= i:
-                                dependencies[sent_id][j].head += 1
-                    except Exception:
-                        print('im gay')
-                        breakpoint()
-
+                    if type(t) == Conll_Token and t.head >= i:
+                        dependencies[sent_id][j].head += 1
 
 
 def get_pred_arg(pt, ptree):
@@ -91,8 +85,23 @@ def get_predicate(terminal_id, tree):
     return tree.leaves()[terminal_id]
 
 
+def add_indices_to_terminals(ptree):
+    indexed = ParentedTree.convert(ptree)
+    for idx, _ in enumerate(ptree.leaves()):
+        tree_location = ptree.leaf_treeposition(idx)
+        non_terminal = indexed[tree_location[:-1]]
+        if "_" in non_terminal[0]:
+            print('NO! There are underscores in PTB!!!')
+            breakpoint()
+            raise Exception
+        else:
+            non_terminal[0] = non_terminal[0] + "_" + str(idx)
+    return indexed
+
+
 def get_argument(terminal_id, height, ptree):
-    terminals = get_terminals(ptree)
+    indexed = add_indices_to_terminals(ptree)
+    terminals = get_terminals(indexed)
 
     parent = terminals[terminal_id]
     if height > 0:
@@ -100,19 +109,28 @@ def get_argument(terminal_id, height, ptree):
             parent = parent.parent()
 
     arg_leaves = parent.leaves()
-    sent_leaves = ptree.leaves()
+    #sent_leaves = ptree.leaves()
+
+    #breakpoint()
+
+    token_idx_pairs = [leaf.split('_') for leaf in arg_leaves]
+    arg = [t_i[0] for t_i in token_idx_pairs]
+    arg_idx = [int(t_i[1]) for t_i in token_idx_pairs]
+
+    #breakpoint()
 
     # Seems like a clunky way to get indices
-    arg_idx = []
-    j = 0
-    for i, leaf in enumerate(sent_leaves):
-        if leaf == arg_leaves[j]:
-            arg_idx.append(i)
-            j += 1
-        if j >= len(arg_leaves):
-            break
+    # XXX DOES NOT WORK, LEAF == . MIGHT BE TRUE COINCIDENTALLY (as in 'THE')
+    #arg_idx = []
+    #j = 0
+    #for i, leaf in enumerate(sent_leaves):
+    #    if leaf == arg_leaves[j]:
+    #        arg_idx.append(i)
+    #        j += 1
+    #    if j >= len(arg_leaves):
+    #        break
 
-    return arg_leaves, arg_idx
+    return arg, arg_idx
 
 
 # NOTE Kind of a heuristic, seems to work fine though
@@ -125,7 +143,7 @@ def get_terminals(ptree: ParentedTree) -> list:
 
 
 # Properties is just a list of proto-properties, for ease of work
-def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
+def get_ins_outs(args, data_points, properties=None, sents=None, w2e=None) -> Tuple[list,
         list]:
     possible_feats = ['pred_lemma_emb', 'pred_pos', 'arg_direction']
 
@@ -142,24 +160,11 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
             print('Need to specify at least one feature.')
             raise Exception
         else:
-            if 'pred_lemma_emb' in args.features:
-                path = os.path.join(PICKLED_DIR, 'glove.pkl')
-                if os.path.exists(path) and not args.init_glove:
-                    with open(path, 'rb') as f:
-                        w2e = pickle.load(f)
-                else:
-                    w2e = w2e_from_file(os.path.join(GLOVE_FILE))
-                    with open(path, 'wb') as f:
-                        pickle.dump(w2e, f)
-
-            for pt in data_points:
-                # One training example per property
+            no_glove = []
+            for pt in tqdm(data_points, desc="Getting features"):
                 X_d = {}
                 sent_id = pt['Sentence.ID']
 
-                #for feat in args.features:
-                    #add_feature(feat, X_d, pt, sents)
-                
                 if 'pred_lemma' in args.features:
                     X_d['pred_lemma'] = pt['pred_lemma']
                 if 'pred_lemma_emb' in args.features:
@@ -167,7 +172,8 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
                         X_d['pred_emb'] = w2e[pt['pred_lemma']]    
                     else:
                         print(f"No embedding for {pt['pred_lemma']}")
-                        raise Exception
+                        no_glove.append(pt['pred_lemma'])
+                        X_d['pred_emb'] = [0.] * 100
                 if 'arg_direction' in args.features:
                     if pt['Pred.Token'] < pt['arg_indices'][0]:
                         X_d['arg_direction'] = 1
@@ -190,20 +196,23 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
                                 #X_d['arg_rel'] = dep[idx].rel
                                 arg_rel = dep[idx].rel
                                 break
-                            if dep[idx].head == dep[pred_idx].head and dep[pred_idx].rel == 'conj':
+                            elif dep[idx].head == dep[pred_idx].head and dep[pred_idx].rel == 'conj':
                                 arg_rel = dep[idx].rel
+                                break
                     if arg_rel == None:
-                        print('Nonzo')
-                        breakpoint()
+                        X_d['arg_rel'] = '<other_or_no>'
                     else:
                         X_d['arg_rel'] = arg_rel
 
                 X.append(X_d) # (property, feats)
                 y.append({p:pt[p]['binary'] for p in properties})
 
+        no_glove_counts = Counter(no_glove)
+
     return X, y
 
 
+#TODO Unused right now?
 def clean_traces(raw_sent):
     cleaned = []
     for token in raw_sent:
@@ -217,9 +226,11 @@ def clean_traces(raw_sent):
 def unkify(X, cutoff=1):
     features = set(X['train'][0].keys()) # X[0] should be as good as any other
 
-    breakpoint()
     X_train = X['train']
     counts = get_feature_counts(X_train)
+    #for k, v in sorted(counts['arg_rel'].items(), key=lambda item: item[1]):
+    #    print(f"{k}: {v}\n")
+    #breakpoint()
 
 
     #exceptions = {'arg_direction', 'arg_distance'}
@@ -228,7 +239,7 @@ def unkify(X, cutoff=1):
     for split in SPLITS:
         for pt in X[split]:
             for f in features - exceptions: 
-                if counts[f][pt[f]] <= cutoff:
+                if f in counts and counts[f][pt[f]] <= cutoff:
                     pt[f] = f'<unk_{f}>'
 
     return
@@ -237,11 +248,13 @@ def unkify(X, cutoff=1):
 def get_feature_counts(X):
     features = X[0].keys() # X[0] should be as good as any other
 
+    acceptable_types = [str, int]
     counts = {} # {feature : Counter}
     for f in features:
         # Round up the set of all values feat takes on in train set
-        values = [pt[f] for pt in X]
-        counts[f] = Counter(values)
+        if type(X[0][f]) in acceptable_types:
+            values = [pt[f] for pt in X]
+            counts[f] = Counter(values)
 
     return counts
 
@@ -261,7 +274,7 @@ def add_pred_args(proto_instances, trees):
     # First, get the predicate and arg tokens
     for split in SPLITS:
         data_points = proto_instances[split]
-        for pt in data_points:
+        for pt in tqdm(data_points, desc=f"Get pred, args, for {split}"):
             s_id = pt['Sentence.ID']
             tree = trees[s_id]
             ptree = ParentedTree.convert(tree)
@@ -388,6 +401,8 @@ def w2e_from_file(emb_file):
     w2e = {}
 
     print(f'Building w2e from file: {emb_file}')
+
+    unk = [0.] * 100
 
     with open(emb_file, 'r', errors='ignore') as f:
         lines = f.readlines()

@@ -6,7 +6,7 @@ CONLLU_DIR = os.path.join(DATA_DIR, 'WSJ_conllus/')
 MODEL_DIR = '../saved_models/'
 
 PROTO_TSV = os.path.join(DATA_DIR, 'protoroles_eng_pb_08302015.tsv')
-GLOVE_FILE = os.path.join(DATA_DIR, 'glove.twitter.27B.100d.txt')
+GLOVE_FILE = os.path.join(DATA_DIR, 'glove.6B.100d.txt')
 
 SPLITS = ['train', 'dev', 'test'] 
 

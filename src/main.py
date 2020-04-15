@@ -66,22 +66,50 @@ def get_data(args):
         with open(path, 'rb') as f:
             proto_instances, possible = pickle.load(f)
     else:
+        proto_instances, possible = data_utils.build_instance_list(df)
         with open(path, 'wb') as f:
-            proto_instances, possible = data_utils.build_instance_list(df)
-            data_utils.add_pred_args(proto_instances, sents_data['trees'])
             pickle.dump((proto_instances, possible), f)
+    if args.add_pred_args:
+        data_utils.add_pred_args(proto_instances, sents_data['trees'])
+        with open(path, 'wb') as f:
+            pickle.dump((proto_instances, possible), f)
+
+    w2e = None
+    path = os.path.join(PICKLED_DIR, 'glove.pkl')
+    if os.path.exists(path) and not args.init_glove:
+        with open(path, 'rb') as f:
+            w2e = pickle.load(f)
+    else:
+        w2e = data_utils.w2e_from_file(GLOVE_FILE)
+        with open(path, 'wb') as f:
+            pickle.dump(w2e, f)
+
+
+    # Little test to make sure arg_indices make sense
+    #for split in SPLITS:
+    #    for pt in proto_instances[split]:
+    #        pred_idx = pt['Pred.Token']
+    #        first_arg = pt['arg_indices'][0]
+    #        last_arg = pt['arg_indices'][-1]
+    #        if first_arg < pred_idx:
+    #            assert last_arg < pred_idx
+    #        elif first_arg > pred_idx:
+    #            assert last_arg > pred_idx
+    #        else: # Arg index NEVER equal pred index
+    #            raise Exception
+
 
     num_instances = sum([len(x) for x in proto_instances.values()])
     print(f'There are {num_instances} instances.')
 
-    return df, proto_instances, possible, sents_data
+    return df, proto_instances, possible, sents_data, w2e
 
 
 if __name__ == '__main__':
     args = get_args()
 
     # Things that do not change depending on experiment
-    df, proto_instances, possible, sents = get_data(args)
+    df, proto_instances, possible, sents, w2e = get_data(args)
 
     # Now normalize (which might be different per experiment)
     #data_utils.normalize(proto_instances, args)
@@ -97,7 +125,7 @@ if __name__ == '__main__':
     y = {}
     for split in SPLITS:
         X_split, y_split = data_utils.get_ins_outs(args, proto_instances[split],
-                properties=PROPERTIES, sents=sents)
+                properties=PROPERTIES, sents=sents, w2e=w2e)
         X[split] = X_split
         y[split] = y_split
 

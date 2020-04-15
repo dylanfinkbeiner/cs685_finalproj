@@ -12,6 +12,8 @@ def get_args():
             action='store_true', dest='init_glove')
     parser.add_argument('-id', help='Initialize dependency data?',
             action='store_true', dest='init_deps')
+    parser.add_argument('-ad', help='Add preds and args??',
+            action='store_true', dest='add_pred_args')
 
     #parser.add_argument('model', help='Name of model', default='dummyname')
     parser.add_argument('-seed', type=int, dest='seed', default=7)
