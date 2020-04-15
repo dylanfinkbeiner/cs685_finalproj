@@ -1,6 +1,8 @@
+import os
 
 DATA_DIR = '../data/'
 PICKLED_DIR = os.path.join(DATA_DIR, 'pickled/')
+CONLLU_DIR = os.path.join(DATA_DIR, 'WSJ_conllus/')
 MODEL_DIR = '../saved_models/'
 
 PROTO_TSV = os.path.join(DATA_DIR, 'protoroles_eng_pb_08302015.tsv')

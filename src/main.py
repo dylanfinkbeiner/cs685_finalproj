@@ -20,19 +20,6 @@ import train
 
 from names import *
 
-# Want to figure out a way to define this once across all files
-#SPLITS = ['train', 'dev', 'test'] 
-#
-#DATA_DIR = '../data/'
-#PICKLED_DIR = os.path.join(DATA_DIR, 'pickled')
-#MODEL_DIR = '../saved_models/'
-#PROTO_TSV = '../protoroles_eng_pb_08302015.tsv'
-#
-#PROPERTIES = ['instigation', 'volition', 'awareness', 'sentient',
-#'exists_as_physical', 'existed_before', 'existed_during', 'existed_after',
-#'created', 'destroyed', 'predicate_changed_argument', 'change_of_state', 
-#'changes_possession', 'change_of_location', 'stationary', 'location_of_event', 
-#'makes_physical_contact', 'manipulated_by_another']
 
 def get_data(args):
     df = pd.read_csv(PROTO_TSV, sep='\t')
@@ -40,7 +27,7 @@ def get_data(args):
     # Sentences
     sent_ids = set(df['Sentence.ID'].tolist())
     print(f'There are {len(sent_ids)} unique sentences.')
-    path = os.path.join(DATA_DIR, 'sents.pkl')
+    path = os.path.join(PICKLED_DIR, 'sents.pkl')
     sents_data = None
     if os.path.exists(path) and not args.init_sents:
         with open(path, 'rb') as f:
@@ -50,8 +37,29 @@ def get_data(args):
             sents_data = data_utils.get_nltk_sents(sent_ids)
             pickle.dump(sents_data, f)
 
+    path = os.path.join(PICKLED_DIR, 'dependencies.pkl')
+    if os.path.exists(path) and not args.init_deps:
+        with open(path, 'rb') as f:
+            dependencies = pickle.load(f)
+    else:
+        with open(path, 'wb') as f:
+            #sent_ids = list(sents_data['raw'].keys())
+            dependencies = data_utils.get_dependencies(sent_ids)
+            pickle.dump(dependencies, f)
+    sents_data['dependencies'] = dependencies
+
+    data_utils.match_to_raw(sents_data['raw'], dependencies)
+
+    #for sent_id in sent_ids:
+    #    try:
+    #        raw = sents_data['raw'][sent_id]
+    #        dep = dependencies[sent_id]
+    #        assert len(raw) == len(dep)
+    #    except Exception:
+    #        breakpoint()
+
     # Instances
-    path = os.path.join(DATA_DIR, 'instances.pkl')
+    path = os.path.join(PICKLED_DIR, 'instances.pkl')
     proto_instances = None
     possible = None # Data to compare to SPRL paper
     if os.path.exists(path) and not args.init_instances:
@@ -92,17 +100,13 @@ if __name__ == '__main__':
                 properties=PROPERTIES, sents=sents)
         X[split] = X_split
         y[split] = y_split
-    
+
+    print('Got features.')
 
     # Setting up models and training, evaluating
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
-
-    #presence = vectorized > 0
-
-    ##X, y = vectorized, labels
-    #X, y = presence, labels
 
     model = None
     if args.model_type == 'majority':

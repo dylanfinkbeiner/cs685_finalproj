@@ -2,18 +2,73 @@ from collections import defaultdict
 from collections import Counter
 from tqdm import tqdm
 from random import shuffle
+import os
+import pickle
 
 from nltk.corpus import ptb
 from nltk.tree import ParentedTree
+import StanfordDependencies
 from typing import Tuple
-
-
 import numpy as np
 
-
 from names import *
-#SPLITS = ['train', 'dev', 'test'] 
-#GLOVE_PKL = '../pickled_data/glove.pkl'
+
+
+class Conll_Token():
+    def __init__(self, line):
+        self.word = line[1]
+        self.pos = line[4]
+        self.head = int(line[6])
+        self.rel = line[7]
+
+    def __repr__(self):
+        return f'Token({self.word}, {self.pos}, {self.head}, {self.rel})'
+
+
+def conllu_to_sents(conllu_file: str):
+    sents_list = []
+
+    with open(conllu_file, 'r') as f:
+        lines = f.readlines()
+    if lines[-1] != '\n':
+        lines.append('\n') # So split_points works properly
+    while lines[0] == '\n':
+        lines.pop(0)
+
+    split_points = [idx for idx, line in enumerate(lines) if line == '\n']
+
+    sent_start = 0
+    for sent_end in split_points: # Assumes the final line is '\n'
+        sents_list.append(lines[sent_start: sent_end])
+        sent_start = sent_end + 1 # Skipping the line break
+
+    for i, s in enumerate(sents_list):
+        s_split = [line.rstrip().split('\t') for line in s] # list of lists
+        s_split = [Conll_Token(line) for line in s_split] #
+
+        sents_list[i] = s_split
+
+    return sents_list
+
+
+def match_to_raw(raw, dependencies):
+    sent_ids = raw.keys()
+
+    for sent_id, raw_ptb in raw.items():
+        k = 0
+        for i, token in enumerate(raw_ptb):
+            dep = dependencies[sent_id][i]
+            if token != dep.word and token != dep.pos and (not '/' in token):
+                dependencies[sent_id].insert(i, token)
+                for j, t in enumerate(dependencies[sent_id]):
+                    try:
+                        if type(t) == Conll_Token:
+                            if t.head >= i:
+                                dependencies[sent_id][j].head += 1
+                    except Exception:
+                        print('im gay')
+                        breakpoint()
+
 
 
 def get_pred_arg(pt, ptree):
@@ -87,19 +142,20 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
             print('Need to specify at least one feature.')
             raise Exception
         else:
-            if 'pred_emb' in args.features:
+            if 'pred_lemma_emb' in args.features:
                 path = os.path.join(PICKLED_DIR, 'glove.pkl')
                 if os.path.exists(path) and not args.init_glove:
                     with open(path, 'rb') as f:
                         w2e = pickle.load(f)
                 else:
-                    w2e = w2e_from_file(os.path.join(GLOVE_FILE)
+                    w2e = w2e_from_file(os.path.join(GLOVE_FILE))
                     with open(path, 'wb') as f:
                         pickle.dump(w2e, f)
 
             for pt in data_points:
                 # One training example per property
                 X_d = {}
+                sent_id = pt['Sentence.ID']
 
                 #for feat in args.features:
                     #add_feature(feat, X_d, pt, sents)
@@ -123,6 +179,24 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
                     arg_idx = pt['arg_indices']
                     arg_mid = (arg_idx[0] + arg_idx[-1]) / 2
                     X_d['arg_distance'] = abs(arg_mid - float(pt['Pred.Token']))
+                if 'arg_rel' in args.features:
+                    dep = sents['dependencies'][sent_id]
+                    pred_idx = pt['Pred.Token']
+                    arg_idx = pt['arg_indices']
+                    arg_rel = None
+                    for idx in arg_idx:
+                        if type(dep[idx]) == Conll_Token:
+                            if dep[idx].head == pred_idx + 1:
+                                #X_d['arg_rel'] = dep[idx].rel
+                                arg_rel = dep[idx].rel
+                                break
+                            if dep[idx].head == dep[pred_idx].head and dep[pred_idx].rel == 'conj':
+                                arg_rel = dep[idx].rel
+                    if arg_rel == None:
+                        print('Nonzo')
+                        breakpoint()
+                    else:
+                        X_d['arg_rel'] = arg_rel
 
                 X.append(X_d) # (property, feats)
                 y.append({p:pt[p]['binary'] for p in properties})
@@ -130,15 +204,27 @@ def get_ins_outs(args, data_points, properties=None, sents=None) -> Tuple[list,
     return X, y
 
 
+def clean_traces(raw_sent):
+    cleaned = []
+    for token in raw_sent:
+        if '*' in token:
+            continue
+        else:
+            cleaned.append(token)
+    return cleaned
+
+
 def unkify(X, cutoff=1):
     features = set(X['train'][0].keys()) # X[0] should be as good as any other
 
+    breakpoint()
     X_train = X['train']
-    counts = get_counts(X_train)
+    counts = get_feature_counts(X_train)
+
 
     #exceptions = {'arg_direction', 'arg_distance'}
     # TODO Should define exceptions in terms of the data type of feat
-    exceptions = {'arg_direction', 'arg_distance'}
+    exceptions = {'arg_direction', 'arg_distance', 'pred_lemma_emb'}
     for split in SPLITS:
         for pt in X[split]:
             for f in features - exceptions: 
@@ -148,7 +234,7 @@ def unkify(X, cutoff=1):
     return
 
 
-def get_counts(X):
+def get_feature_counts(X):
     features = X[0].keys() # X[0] should be as good as any other
 
     counts = {} # {feature : Counter}
@@ -224,6 +310,33 @@ def get_nltk_sents(sent_ids):
     return data
 
 
+def get_dependencies(sent_ids):
+    dependencies = {}
+
+    def parse_id(sent_id):
+        return sent_id.split('_')
+
+    # NOTE Didn't work because of some issue with JPype1
+    #sd = StanfordDependencies.get_instance(backend='subprocess')
+    #sd = StanfordDependencies.get_instance()
+    #for sid, tree in tqdm(trees.items(), desc='Converting to dependencies'):
+    #    dependencies[sid] = sd.convert_tree(str(tree))
+
+    mrg_ids = [parse_id(sid)[0] for sid in sent_ids]
+
+    conllus = {}
+    for mrg_id in tqdm(mrg_ids, desc="Getting conllus"):
+        path = os.path.join(CONLLU_DIR, mrg_id[:2], f'WSJ_{mrg_id}.conllu')
+        sents = conllu_to_sents(path)
+        conllus[mrg_id] = sents
+
+    for sent_id in sent_ids:
+        mrg_id, sent_num = parse_id(sent_id)
+        dependencies[sent_id] = conllus[mrg_id][int(sent_num)]
+
+    return dependencies
+
+
 def build_instance_list(df):
     print(f'df has {df.shape[0]} entries')
 
@@ -283,8 +396,8 @@ def w2e_from_file(emb_file):
             lines.pop(0)
 
         for i, line in tqdm(enumerate(lines), ascii=True, desc=f'w2e Progress', ncols=80):
-            #if i >= 200000:
-            if i >= 10000:
+            if i >= 1000000:
+            #if i >= 10000:
                 break
             line = line.split()
             word = line[0].lower()
