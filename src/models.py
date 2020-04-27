@@ -29,38 +29,6 @@ class LogReg():
                     max_iter=1000)
 
 
-class Glove_LogReg(nn.Module):
-    def __init__(
-            self,
-            vocab_size=None,
-            emb_size=None,
-            padding_idx=None,
-            emb_np=None):
-        super(Glove_LogReg, self).__init__()
-
-        self.word_emb = nn.Embedding(
-                vocab_size,
-                emb_size,
-                padding_idx=padding_idx)
-        #self.word_emb.weight.requires_grad = False
-
-        # Copy word embeddings from numpy array
-        self.word_emb.weight.data.copy_(torch.Tensor(emb_np))
-
-        # Takes avg embedding to 2 output classes
-        self.logreg = nn.Linear(emb_size, 2)
-
-
-    def forward(self, inputs):
-        w_embs = self.word_emb(inputs) # (B, L, D)
-
-        avg = w_embs.mean(1) # (B, D)
-
-        logits = self.logreg(avg) # (B, 2)
-
-        return logits
-
-
 class MajorityBaseline():
     def __init__(self, instances, properties):
         # Get preferred output for each proto-role property

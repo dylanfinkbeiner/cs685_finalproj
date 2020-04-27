@@ -67,8 +67,14 @@ def train(args, model, X, y, properties):
 
         #metric_names = ['F', 'precision', 'recall']
 
-        F, precision, recall = evaluate.micro_average(results)
-        metrics['micro_avg'] = {'F': F, 'precision': precision, 'recall':
-                recall}
+
+    if args.model_type == 'majority':
+        results = {}
+        metrics = {}
+        results['all'], metrics['all'] = evaluate.evaluate(args, model, X['dev'], y['dev'])
+
+    breakpoint()
+    F, precision, recall = evaluate.micro_average(results)
+    metrics['micro_avg'] = {'F': F, 'precision': precision, 'recall': recall}
 
     return metrics

@@ -21,6 +21,90 @@ import train
 from names import *
 
 
+def recreate_created_destroyed(proto_instances):
+    created = {'train': 0, 'dev': 0}
+    destroyed = {'train': 0, 'dev': 0}
+
+    for split in proto_instances.keys():
+        if split == 'test':
+            continue
+        for pt in proto_instances[split]:
+            if pt['existed_before']['binary'] == 1:
+                if pt['existed_after']['binary'] == 0:
+                    destroyed[split] += 1
+                    try:
+                        assert pt['destroyed']['binary'] == 1
+                    except Exception:
+                        print('Not destroyed!')
+                        breakpoint()
+            else:
+                if pt['existed_after']['binary'] == 1:
+                    created[split] += 1
+                    #assert pt['created'] == 1
+
+    return created, destroyed
+
+
+def stationary_v_location(proto_instances, raw):
+    compare = {'inverse': 0, 'not': 0}
+
+    for split in proto_instances.keys():
+        for pt in proto_instances[split]:
+            location = pt['change_of_location']['binary']
+            stationary = pt['stationary']['binary']
+            if location != stationary:
+                compare['inverse'] += 1
+                    #try:
+                    #    assert pt['destroyed']['binary'] == 1
+                    #except Exception:
+                    #    print('Not destroyed!')
+                    #    breakpoint()
+            elif location == 1 and stationary == 1:
+                print('Huh??')
+                pred = pt['pred_token']
+                arg = pt['arg_tokens']
+                sent = raw[pt['Sentence.ID']]
+                print(f'Predicate {pred}, arg {arg}')
+                breakpoint()
+                compare['not'] += 1
+                    #assert pt['compare'] == 1
+
+    return compare
+
+
+# What other properties occur with change_of_location?
+def locations(proto_instances, raw):
+    others = {p:0 for p in PROPERTIES}
+
+    for split in proto_instances.keys():
+        for pt in proto_instances[split]:
+            location = pt['location_of_event']['binary']
+            if location:
+                # Fact that locations are so often embedded inside
+                # arguments may explain low interann agreement
+                if not pt['exists_as_physical']['binary']:
+                    print('A non-physical location??')
+                    pred = pt['pred_token']
+                    arg = pt['arg_tokens']
+                    sent = raw[pt['Sentence.ID']]
+                    print(f'Predicate {pred}, arg {arg}')
+                    print(sent)
+                    print(pt['location_of_event'])
+                    print(pt['exists_as_physical'])
+                    breakpoint()
+                for p in PROPERTIES:
+                    if pt[p]['binary']:
+                        others[p] += 1
+
+    values = sorted(others.items(), key = lambda x: x[0])
+    values = [x[1] for x in values]
+    props = sorted(list(others.keys()))
+    plt.bar(x=np.arange(len(values)), height=values, tick_label=props)
+    plt.xticks(rotation=90)
+    plt.show()
+    return 
+
+
 def get_data(args):
     df = pd.read_csv(PROTO_TSV, sep='\t')
 
@@ -111,15 +195,59 @@ if __name__ == '__main__':
     # Things that do not change depending on experiment
     df, proto_instances, possible, sents, w2e = get_data(args)
 
+    # Analyze POS tags of predicate verbs of proto role dataset
+    #tagged = sents['tagged']
+    #all_pos = []
+    #for pt in proto_instances['train']:
+    #    # This does not account for multiple pred-arg pairs with same sentence
+    #    # and predicate
+    #    sid = pt['Sentence.ID']
+    #    predid = pt['Pred.Token']
+    #    tagged_sent = tagged[sid]
+    #    all_pos.append(tagged_sent[predid][1])
+
+    #breakpoint()
+
+    raw = sents['raw']
+    #created, destroyed = recreate_created_destroyed(proto_instances)
+    #compare = stationary_v_location(proto_instances, sents['raw'])
+    #locations(proto_instances, raw)
+
+
     # Now normalize (which might be different per experiment)
     #data_utils.normalize(proto_instances, args)
 
     # TODO Why are these numbers not matching the ones in SPRL paper?
+
+    array = []
     for p in PROPERTIES:
         possible_train = possible['train'][p]
         possible_dev = possible['dev'][p]
+        array.append([p, possible_train, possible_dev])
         print(f'{p} -- Train: {possible_train}, Dev: {possible_dev}\n')
+    #array = np.array(array)
+    #columns=['name', 'train', 'dev']
+    #dfp = pd.DataFrame(array, index=list(range(18)), columns=columns)
+    #with open('./tables.txt', 'w') as f:
+    #    f.write(dfp.to_latex())
 
+    breakpoint()
+
+    #STATS
+
+    #arg_lens = []
+    #for split in SPLITS:
+    #    for case in proto_instances[split]:
+    #        if len(case['arg_tokens']) == 49:
+    #            print('Wham-o!')
+    #            breakpoint()
+    #        arg_lens.append(len(case['arg_tokens']))
+    #    #len_med = np.median(arg_lens)
+    #    #len_m = np.mean(arg_lens)
+
+    #len_med = np.median(arg_lens)
+    #len_m = np.mean(arg_lens)
+    #breakpoint()
 
     X = {}
     y = {}
@@ -147,20 +275,30 @@ if __name__ == '__main__':
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
     elif args.model_type == 'logreg':
-        data_utils.unkify(X, cutoff=2)
+        data_utils.unkify(X, cutoff=0)
 
         all_X = []
         l_u = {}
         l = 0
         u = 0
+        embs = []
         for split in SPLITS:
             all_X.extend(X[split])
             u += len(X[split])
+            if 'pred_lemma_emb' in args.features:
+                embs.extend([d.pop('pred_emb') for d in all_X[l:u]])
             l_u[split] = (l, u)
             l = u
 
+        # STATS
+        arg_ds= set([x['pred_lemma'] for x in all_X])
+        breakpoint()
+
         v = DictVectorizer(sparse=False)
         vectorized = v.fit_transform(all_X)
+        if 'pred_lemma_emb' in args.features:
+            embs = np.array(embs)
+            vectorized = np.concatenate((vectorized, embs), axis=-1)
         names = np.array(v.get_feature_names())
 
         for split in SPLITS:
@@ -180,8 +318,16 @@ if __name__ == '__main__':
 
     metrics = train.train(args, model, X, y, PROPERTIES)
 
+    array = []
     for k, v in metrics.items():
-        print(f"{k}: F={v['F']:.2f}, p={v['precision']:.2f}, r={v['recall']:.2f}")
+        array.append([f"{v['F']*100:.2f}", f"{v['precision']*100:.2f}", f"{v['recall']*100:.2f}"])
+        print(f"{k}: F={v['F']*100:.2f}, p={v['precision']*100:.2f}, r={v['recall']*100:.2f}")
+    array = np.array(array)
+    columns = ['F1', 'Precision', 'Recall']
+    dfm = pd.DataFrame(array, index=PROPERTIES + ['micro average'], columns=columns)
+    breakpoint()
+    with open('./tables.txt', 'w') as f:
+        f.write(dfm.to_latex())
 
     print('Finished training.')
     breakpoint()

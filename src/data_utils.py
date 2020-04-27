@@ -147,6 +147,11 @@ def get_ins_outs(args, data_points, properties=None, sents=None, w2e=None) -> Tu
         list]:
     possible_feats = ['pred_lemma_emb', 'pred_pos', 'arg_direction']
 
+    acceptable_rels = ['nsubj', 'dobj', 'nmod', 'nsubjpass', 'nmod:npmod',
+            'compound:prt', 'iobj', 'advcl', 'xcomp', 'advmod', 'conj',
+            'nmod:tmod', 'ccomp', 'dep']
+    #acceptable_rels = ['nsubj', 'dobj']
+
     X = []
     y = []
 
@@ -173,12 +178,12 @@ def get_ins_outs(args, data_points, properties=None, sents=None, w2e=None) -> Tu
                     else:
                         print(f"No embedding for {pt['pred_lemma']}")
                         no_glove.append(pt['pred_lemma'])
-                        X_d['pred_emb'] = [0.] * 100
+                        X_d['pred_emb'] = np.zeros(100)
                 if 'arg_direction' in args.features:
                     if pt['Pred.Token'] < pt['arg_indices'][0]:
-                        X_d['arg_direction'] = 1
+                        X_d['arg_direction'] = 0
                     elif pt['Pred.Token'] > pt['arg_indices'][0]:
-                        X_d['arg_direction'] = -1
+                        X_d['arg_direction'] = 1
                     else:
                         raise Exception
                 if 'arg_distance' in args.features:
@@ -194,11 +199,13 @@ def get_ins_outs(args, data_points, properties=None, sents=None, w2e=None) -> Tu
                         if type(dep[idx]) == Conll_Token:
                             if dep[idx].head == pred_idx + 1:
                                 #X_d['arg_rel'] = dep[idx].rel
-                                arg_rel = dep[idx].rel
-                                break
+                                if dep[idx].rel in acceptable_rels:
+                                    arg_rel = dep[idx].rel
+                                    break
                             elif dep[idx].head == dep[pred_idx].head and dep[pred_idx].rel == 'conj':
-                                arg_rel = dep[idx].rel
-                                break
+                                if dep[idx].rel in acceptable_rels:
+                                    arg_rel = dep[idx].rel
+                                    break
                     if arg_rel == None:
                         X_d['arg_rel'] = '<other_or_no>'
                     else:
@@ -223,7 +230,7 @@ def clean_traces(raw_sent):
     return cleaned
 
 
-def unkify(X, cutoff=1):
+def unkify(X, cutoff=0):
     features = set(X['train'][0].keys()) # X[0] should be as good as any other
 
     X_train = X['train']
@@ -355,9 +362,9 @@ def build_instance_list(df):
 
     instances = {name: dict() for name in SPLITS}
 
-    props = ['Response', 'Applicable']
+    prop_cols = ['Response', 'Applicable']
     cols = set(df.columns.tolist())
-    not_props = cols - set(props) - {'Property'}
+    not_props = cols - set(prop_cols) - {'Property'}
 
     properties = list(set(df['Property'].tolist()))
     possible = {split:{p:0 for p in properties} for split in ['train', 'dev']}
@@ -381,14 +388,15 @@ def build_instance_list(df):
         else:
             d = instances[x['Split']][idstr]
 
-        d[x['Property']] = {p: x[p] for p in props}
+        d[x['Property']] = {c: x[c] for c in prop_cols}
         binary_label = int(x['Applicable'] and (x['Response'] >= 4))
+        #binary_label = x['Response'] >= 4 # Doesn't make a difference
         d[x['Property']]['binary'] = binary_label
         
         if binary_label == 1 and x['Split'] != 'test':
             possible[x['Split']][x['Property']] += 1
 
-    # ID keys in instances serve no further purpose, listify
+    # ID keys serve no further purpose, listify the splits
     for split in SPLITS:
         data_points = instances[split]
         listified = sorted(data_points.items(), key=lambda x: x[0])
@@ -412,13 +420,12 @@ def w2e_from_file(emb_file):
 
         for i, line in tqdm(enumerate(lines), ascii=True, desc=f'w2e Progress', ncols=80):
             if i >= 1000000:
-            #if i >= 10000:
                 break
             line = line.split()
             word = line[0].lower()
             try:
                 word_vector = [float(value) for value in line[1:]]
-                w2e[word] = word_vector
+                w2e[word] = np.array(word_vector)
             except Exception:
                 print(f'Word is: {word}, line is {i}')
 
