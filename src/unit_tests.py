@@ -36,6 +36,19 @@ class TestTemplate(unittest.TestCase):
                         breakpoint()
 
 
+    # Little test to make sure arg_indices make sense
+    #for split in SPLITS:
+    #    for pt in proto_instances[split]:
+    #        pred_idx = pt['Pred.Token']
+    #        first_arg = pt['arg_indices'][0]
+    #        last_arg = pt['arg_indices'][-1]
+    #        if first_arg < pred_idx:
+    #            assert last_arg < pred_idx
+    #        elif first_arg > pred_idx:
+    #            assert last_arg > pred_idx
+    #        else: # Arg index NEVER equal pred index
+    #            raise Exception
+
 
 
 if __name__ == '__main__':

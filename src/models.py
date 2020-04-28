@@ -64,3 +64,79 @@ class MajorityBaseline():
 
         return preds
 
+
+class LSTM(nn.Module):
+    def __init__(self,
+            vocab_size=None,
+            emb_size=None,
+            h_size=None,
+            padding_idx=None,
+            emb_np=None,
+            properties=None):
+        super(LSTM, self).__init__()
+
+        self.word_emb = nn.Embedding(
+                vocab_size,
+                emb_size,
+                padding_idx=padding_idx)
+        
+        self.word_emb.weight.data.copy_(torch.Tensor(emb_np))
+
+        self.lstm = nn.LSTM(
+                input_size=emb_size,    
+                hidden_size=h_size,
+                num_layers=1,
+                bidirectional=False,
+                batch_first=True,
+                dropout=0.1,
+                bias=True)
+
+        #self.mlps = {p: nn.Linear(2 * h_size, 2) for p in PROPERTIES}
+        self.mlp = nn.Linear(2*h_size*len(properties), 2)
+
+
+    def forward(self, inputs, sent_lens, heads):
+
+        # Sort the sentences so that the LSTM can process properly
+        lens_sorted = sent_lens
+        words_sorted = inputs
+        indices = None
+        if(len(inputs) > 1):
+            lens_sorted, indices = torch.sort(lens_sorted, descending=True)
+            indices = indices
+            words_sorted = words_sorted.index_select(0, indices)
+
+        w_embs = self.word_emb(inputs)
+
+        packed_lstm_input = pack_padded_sequence(
+                w_embs, lens_sorted, batch_first=True)
+
+        outputs, _ = self.lstm(packed_lstm_input)
+        outputs, _ = pad_packed_sequence(outputs, batch_first=True)
+
+        # Unsort sentences to return to proper alignment with labels
+        if len(outputs) > 1:
+            outputs = unsort(outputs, indices)
+
+        # outputs : (B, L, h_size)
+        preds = outputs[:, preds] # expecting (B, 1, h_size) or (B, h_size)
+        heads = outputs[:, heads] # same as above
+
+        # Get pred-arg representation
+        mlp_input = torch.cat([preds, heads], dim=-1) # (B, 2*h_size)
+
+        logits = {p: None for p in PROPERTIES}
+        for p in PROPERTIES:
+            logits[p] = self.mlps[p](mlp_input)
+
+        return logits
+
+
+        
+    def predict(self, inputs, sent_lens, heads):
+
+        logits = self.forward(inputs, sent_lesn, heads)
+        preds = argmax(logits, -1) # assuming logits a (num_props X 2) array
+
+        return preds
+ 

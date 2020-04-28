@@ -112,41 +112,33 @@ def get_data(args):
     sent_ids = set(df['Sentence.ID'].tolist())
     print(f'There are {len(sent_ids)} unique sentences.')
     path = os.path.join(PICKLED_DIR, 'sents.pkl')
-    sents_data = None
-    if os.path.exists(path) and not args.init_sents:
+    sents = None
+    if os.path.exists(path) and not 'sents' in args.init_list:
         with open(path, 'rb') as f:
-            sents_data = pickle.load(f)
+            sents = pickle.load(f)
     else:
         with open(path, 'wb') as f:
-            sents_data = data_utils.get_nltk_sents(sent_ids)
-            pickle.dump(sents_data, f)
+            sents = data_utils.get_nltk_sents(sent_ids)
+            pickle.dump(sents, f)
 
+    # Dependency data
     path = os.path.join(PICKLED_DIR, 'dependencies.pkl')
-    if os.path.exists(path) and not args.init_deps:
+    if os.path.exists(path) and not 'deps' in args.init_list:
         with open(path, 'rb') as f:
-            dependencies = pickle.load(f)
+            deps, deps_just_tokens = pickle.load(f)
     else:
         with open(path, 'wb') as f:
-            #sent_ids = list(sents_data['raw'].keys())
-            dependencies = data_utils.get_dependencies(sent_ids)
-            pickle.dump(dependencies, f)
-    sents_data['dependencies'] = dependencies
-
-    data_utils.match_to_raw(sents_data['raw'], dependencies)
-
-    #for sent_id in sent_ids:
-    #    try:
-    #        raw = sents_data['raw'][sent_id]
-    #        dep = dependencies[sent_id]
-    #        assert len(raw) == len(dep)
-    #    except Exception:
-    #        breakpoint()
+            #sent_ids = list(sents['raw'].keys())
+            deps, deps_just_tokens = data_utils.get_dependencies(sent_ids)
+            pickle.dump((deps, deps_just_tokens), f)
+    sents['dependencies'] = deps
+    sents['deps_just_tokens'] = deps_just_tokens
 
     # Instances
     path = os.path.join(PICKLED_DIR, 'instances.pkl')
     proto_instances = None
     possible = None # Data to compare to SPRL paper
-    if os.path.exists(path) and not args.init_instances:
+    if os.path.exists(path) and not 'instances' in args.init_list:
         with open(path, 'rb') as f:
             proto_instances, possible = pickle.load(f)
     else:
@@ -154,46 +146,57 @@ def get_data(args):
         with open(path, 'wb') as f:
             pickle.dump((proto_instances, possible), f)
     if args.add_pred_args:
-        data_utils.add_pred_args(proto_instances, sents_data['trees'])
+        data_utils.add_pred_args(proto_instances, sents['trees'])
         with open(path, 'wb') as f:
             pickle.dump((proto_instances, possible), f)
 
+    # Matching between raw and dependency data
+    if args.model_type != 'lstm':
+        data_utils.match_conllu_to_raw(sents['raw'], deps)
+    else:
+        proto_instances = data_utils.match_raw_to_conllu(
+                proto_instances, sents['raw'], deps_just_tokens)
+
+    # Word embedding data
+    sent_ids = {} # Redefining sent_ids for this section
+    for split in SPLITS:
+        sent_ids[split] = [pt['Sentence.ID'] for pt in proto_instances[split]]
     w2e = None
-    path = os.path.join(PICKLED_DIR, 'glove.pkl')
-    if os.path.exists(path) and not args.init_glove:
+    path = os.path.join(PICKLED_DIR, f'glove_{args.glove_d}.pkl')
+    if os.path.exists(path) and not 'glove' in args.init_list:
         with open(path, 'rb') as f:
             w2e = pickle.load(f)
     else:
-        w2e = data_utils.w2e_from_file(GLOVE_FILE)
+        vocab = data_utils.get_vocabulary(deps_just_tokens)
+        w2e = data_utils.w2e_from_file(
+                GLOVE_FILE[args.glove_d], vocab=vocab)
         with open(path, 'wb') as f:
             pickle.dump(w2e, f)
-
-
-    # Little test to make sure arg_indices make sense
-    #for split in SPLITS:
-    #    for pt in proto_instances[split]:
-    #        pred_idx = pt['Pred.Token']
-    #        first_arg = pt['arg_indices'][0]
-    #        last_arg = pt['arg_indices'][-1]
-    #        if first_arg < pred_idx:
-    #            assert last_arg < pred_idx
-    #        elif first_arg > pred_idx:
-    #            assert last_arg > pred_idx
-    #        else: # Arg index NEVER equal pred index
-    #            raise Exception
 
 
     num_instances = sum([len(x) for x in proto_instances.values()])
     print(f'There are {num_instances} instances.')
 
-    return df, proto_instances, possible, sents_data, w2e
+    return {'df': df, 
+            'proto_instances': proto_instances, 
+            'possible': possible,
+            'sents': sents,
+            'w2e': w2e,
+            'sent_ids': sent_ids}
+
 
 
 if __name__ == '__main__':
     args = get_args()
 
     # Things that do not change depending on experiment
-    df, proto_instances, possible, sents, w2e = get_data(args)
+    data = get_data(args)
+    df = data['df']
+    proto_instances = data['proto_instances']
+    possible = data['possible']
+    sents = data['sents']
+    w2e = data['w2e']
+    sent_ids = data['sent_ids']
 
     # Analyze POS tags of predicate verbs of proto role dataset
     #tagged = sents['tagged']
@@ -219,19 +222,18 @@ if __name__ == '__main__':
 
     # TODO Why are these numbers not matching the ones in SPRL paper?
 
-    array = []
-    for p in PROPERTIES:
-        possible_train = possible['train'][p]
-        possible_dev = possible['dev'][p]
-        array.append([p, possible_train, possible_dev])
-        print(f'{p} -- Train: {possible_train}, Dev: {possible_dev}\n')
-    #array = np.array(array)
-    #columns=['name', 'train', 'dev']
-    #dfp = pd.DataFrame(array, index=list(range(18)), columns=columns)
-    #with open('./tables.txt', 'w') as f:
-    #    f.write(dfp.to_latex())
-
-    breakpoint()
+    if args.print_possible:
+        array = []
+        for p in PROPERTIES:
+            possible_train = possible['train'][p]
+            possible_dev = possible['dev'][p]
+            array.append([p, possible_train, possible_dev])
+            print(f'{p} -- Train: {possible_train}, Dev: {possible_dev}\n')
+        #array = np.array(array)
+        #columns=['name', 'train', 'dev']
+        #dfp = pd.DataFrame(array, index=list(range(18)), columns=columns)
+        #with open('./tables.txt', 'w') as f:
+        #    f.write(dfp.to_latex())
 
     #STATS
 
@@ -249,16 +251,7 @@ if __name__ == '__main__':
     #len_m = np.mean(arg_lens)
     #breakpoint()
 
-    X = {}
-    y = {}
-    for split in SPLITS:
-        X_split, y_split = data_utils.get_ins_outs(args, proto_instances[split],
-                properties=PROPERTIES, sents=sents, w2e=w2e)
-        X[split] = X_split
-        y[split] = y_split
-
-    print('Got features.')
-
+    
     # Setting up models and training, evaluating
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -274,8 +267,57 @@ if __name__ == '__main__':
             model = models.MajorityBaseline(proto_instances, PROPERTIES)
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
+    elif args.model_type == 'lstm':
+
+        dicts_path = os.path.join(PICKLED_DIR, 'dicts.pkl')
+        if os.path.exists(dicts_path) and not 'dicts' in args.init_list:
+            with open(dicts_path, 'rb') as f:
+                w2i, i2w = pickle.load(f)
+        else:
+            w2i, i2w = data_utils.build_dicts(
+                    sents['deps_just_tokens'],
+                    sent_ids=sent_ids,
+                    glove_vocab=sorted(list(w2e.keys())))
+            with open(dicts_path, 'wb') as f:
+                pickle.dump((w2i, i2w), f)
+
+        emb_np = data_utils.build_emb_np(w2e, w2i=w2i, i2w=i2w)
+
+        # Proto instances modified in-place here
+        data_utils.get_arg_head_idx(proto_instances, sents['dependencies'],
+                sents['deps_just_tokens'])
+
+        numericalized = data_utils.numericalize(sents['deps_just_tokens'], w2i)
+        X = {}
+        y = {}
+        for split in SPLITS:
+            X[split], y[split] = data_utils.get_ins_outs_lstm(
+                    proto_instances[split], numericalized)
+
+        model = models.LSTM(
+                vocab_size=len(w2i),
+                emb_size=int(args.glove_d),
+                h_size=args.h_size,
+                padding_idx=w2i[PAD_TOKEN],
+                emb_np=emb_np,
+                properties=PROPERTIES)
+
+        print('Finished building lstm model!')
+        breakpoint()
+
+
     elif args.model_type == 'logreg':
-        data_utils.unkify(X, cutoff=0)
+        X = {}
+        y = {}
+        for split in SPLITS:
+            X_split, y_split = data_utils.get_ins_outs(args, proto_instances[split],
+                    properties=PROPERTIES, sents=sents, w2e=w2e)
+            X[split] = X_split
+            y[split] = y_split
+
+        print('Got logreg features.')
+
+        data_utils.unkify_logreg_features(X, cutoff=0)
 
         all_X = []
         l_u = {}

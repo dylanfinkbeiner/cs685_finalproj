@@ -6,7 +6,7 @@ CONLLU_DIR = os.path.join(DATA_DIR, 'WSJ_conllus/')
 MODEL_DIR = '../saved_models/'
 
 PROTO_TSV = os.path.join(DATA_DIR, 'protoroles_eng_pb_08302015.tsv')
-GLOVE_FILE = os.path.join(DATA_DIR, 'glove.6B.100d.txt')
+GLOVE_FILE = {'100': os.path.join(DATA_DIR, 'glove.6B.100d.txt') }
 
 SPLITS = ['train', 'dev', 'test'] 
 
@@ -15,4 +15,8 @@ PROPERTIES = ['instigation', 'volition', 'awareness', 'sentient',
 'created', 'destroyed', 'predicate_changed_argument', 'change_of_state', 
 'changes_possession', 'change_of_location', 'stationary', 'location_of_event', 
 'makes_physical_contact', 'manipulated_by_another']
+
+
+PAD_TOKEN = '<pad>'
+UNK_TOKEN = '<unk>'
 

@@ -26,7 +26,7 @@ class Conll_Token():
 
 
 def conllu_to_sents(conllu_file: str):
-    sents_list = []
+    sents_everything = []
 
     with open(conllu_file, 'r') as f:
         lines = f.readlines()
@@ -39,19 +39,22 @@ def conllu_to_sents(conllu_file: str):
 
     sent_start = 0
     for sent_end in split_points: # Assumes the final line is '\n'
-        sents_list.append(lines[sent_start: sent_end])
+        sents_everything.append(lines[sent_start: sent_end])
         sent_start = sent_end + 1 # Skipping the line break
 
-    for i, s in enumerate(sents_list):
+    # i indexes the sentence number within the conllu file
+    sents_just_tokens = []
+    for i, s in enumerate(sents_everything):
         s_split = [line.rstrip().split('\t') for line in s] # list of lists
         s_split = [Conll_Token(line) for line in s_split] #
 
-        sents_list[i] = s_split
+        sents_everything[i] = s_split
+        sents_just_tokens.append([(x.word).lower() for x in s_split])
 
-    return sents_list
+    return sents_everything, sents_just_tokens
 
 
-def match_to_raw(raw, dependencies):
+def match_conllu_to_raw(raw, dependencies):
     sent_ids = raw.keys()
 
     for sent_id, raw_ptb in raw.items():
@@ -63,6 +66,75 @@ def match_to_raw(raw, dependencies):
                 for j, t in enumerate(dependencies[sent_id]):
                     if type(t) == Conll_Token and t.head >= i:
                         dependencies[sent_id][j].head += 1
+
+# point of this function is to get pred and arg indices into raw tokens to
+# match locations in Connlu
+def match_raw_to_conllu(proto_instances, raw, deps_just_tokens):
+    all_instances = []
+    for split in SPLITS:
+        all_instances.extend(proto_instances[split])
+
+    all_instances = {x['Sentence.ID']: x for x in all_instances}
+
+    def lowered(token_seq):
+        return [t.lower() for t in token_seq]
+
+    sent_ids = raw.keys()
+
+    for sent_id, raw_ptb in tqdm(raw.items(), desc='Matching raw to Conllu'):
+        deps_sent = deps_just_tokens[sent_id]
+        pt = all_instances[sent_id] # instance data point
+        pred_idx = pt['Pred.Token']
+        arg_idxs = pt['arg_indices']
+        new_pred_idx = pred_idx # Just making copies
+        new_arg_idxs = list(arg_idxs)
+        idx_to_remove = []
+        j = 0
+        for i, raw_token in enumerate(raw_ptb):
+            dep_token = deps_sent[j]
+
+            okay = True
+            if raw_token.lower() != dep_token:
+                if raw_token == '-LRB-':
+                    raw_ptb[i] = '('
+                elif raw_token == '-RRB-':
+                    raw_ptb[i] = ')'
+                elif '\\' in raw_token:
+                    raw_ptb[i] = raw_ptb[i].replace('\\', '')
+
+                else:
+                    okay = False
+                    idx_to_remove.append(i)
+
+                    if i < pred_idx:
+                        new_pred_idx -= 1
+                    if i < arg_idxs[0]:
+                        for k in range(len(new_arg_idxs)):
+                            new_arg_idxs[k] -= 1
+            if okay: 
+                j += 1
+
+        cleaned_raw = [t for i,t in enumerate(raw_ptb) if i not in
+                idx_to_remove]
+        try:
+            assert lowered(cleaned_raw) == deps_sent
+        except Exception:
+            print(f'cleaned_raw: {cleaned_raw}')
+            print(f'deps_sent: {deps_sent}')
+            breakpoint()
+        # Correctly modifying all_instances in-place
+        pt['Pred.Token'] = new_pred_idx 
+        pt['arg_indices'] = new_arg_idxs
+
+
+    updated_instances = {split: list() for split in SPLITS}
+    for pt in all_instances.values():
+        updated_instances[pt['Split']].append(pt)
+
+    # We only modified the proto_instances, but we should check to see that
+    # this in-place modification holds after the function is finished
+    return updated_instances
+
 
 
 def get_pred_arg(pt, ptree):
@@ -214,9 +286,56 @@ def get_ins_outs(args, data_points, properties=None, sents=None, w2e=None) -> Tu
                 X.append(X_d) # (property, feats)
                 y.append({p:pt[p]['binary'] for p in properties})
 
-        no_glove_counts = Counter(no_glove)
+    return X, y
+
+
+def get_ins_outs_lstm(instances, numericalized):
+    X = []
+    y = []
+
+    for pt in instances:
+        pred_idx, head_idx = pt['Pred.Token'], pt['arg_head_idx']
+        curr_x = (numericalized[pt['Sentence.ID']], (pred_idx, head_idx))
+        X.append(curr_x)
+        y.append(np.array([pt[p]['binary'] for p in PROPERTIES]))
 
     return X, y
+
+
+# Specifically builds the numpy array of word embeddings, such that index
+# along 0th dim corresponds to indices in w2i
+def build_emb_np(w2e, w2i=None, i2w=None):
+    dict_length = len(w2e)
+
+    emb_size = len(w2e['the']) # Should be the same length as any other word vector
+    def rand_vect():
+        vec = np.random.randn(emb_size)
+        return (vec / np.linalg.norm(vec)).tolist()
+
+    emb_list = [rand_vect()] * 2
+
+    # Important that we append embs in order of indices i
+    words = [w for w,i in sorted(w2i.items(), key=lambda x: x[1])]
+    words.remove(PAD_TOKEN) 
+    words.remove(UNK_TOKEN) 
+    for w in tqdm(words, ascii=True, desc=f'Building emb_np', ncols=80):
+        emb_list.append(w2e[w])
+
+    emb_np = np.array(emb_list)
+
+    return emb_np
+
+
+def get_vocabulary(deps_just_tokens, sent_ids=None):
+    # deps_just_tokens[sent_id] = list of lowercased tokens
+    vocab = set()
+    #NOTE We're building vocab with all splits, and the GloVe embbeddings will
+    #dictate which tokens ought to be unks; otherwise we'd use sent_ids to
+    #select build vocab specifically sents with id in sent_ids['train']
+    for sent in deps_just_tokens.values():
+        for token in sent:
+            vocab.add(token)
+    return vocab
 
 
 #TODO Unused right now?
@@ -230,7 +349,7 @@ def clean_traces(raw_sent):
     return cleaned
 
 
-def unkify(X, cutoff=0):
+def unkify_logreg_features(X, cutoff=0):
     features = set(X['train'][0].keys()) # X[0] should be as good as any other
 
     X_train = X['train']
@@ -277,7 +396,6 @@ def split_on_properties(y, properties=[]):
 
 def add_pred_args(proto_instances, trees):
 
-    normalized = {}
     # First, get the predicate and arg tokens
     for split in SPLITS:
         data_points = proto_instances[split]
@@ -294,9 +412,49 @@ def add_pred_args(proto_instances, trees):
     return
 
 
-def normalize(proto_instances, args):
+def normalize(deps_just_tokens, args):
     # TODO
     return
+
+def unkify():
+    # TODO
+    return
+
+def numericalize(deps_just_tokens, w2i):
+    numericalized = {}
+    for sent_id, sent in deps_just_tokens.items():
+        ints = [w2i.get(tok, w2i[UNK_TOKEN]) for tok in sent]
+        ints = np.array(ints)
+        numericalized[sent_id] = ints
+
+    return numericalized
+
+
+def get_arg_head_idx(proto_instances, dependencies, deps_just_tokens):
+    for curr_split in proto_instances.values():
+        for pt in curr_split:
+            sent_id = pt['Sentence.ID']
+            dep = dependencies[sent_id]
+            # From left to right, find first token whose
+            # head is not in the dominated constituent (i.e. internal
+            # to the argument span)
+            head_idx = None
+            arg_idxs = pt['arg_indices']
+            for idx in arg_idxs:
+                conll_tok = dep[idx]
+                if conll_tok.head - 1 in arg_idxs:
+                    continue
+                else:
+                    head_idx = idx
+                    break
+            try:
+                assert head_idx != None
+            except Exception:
+                print(f'Head_idx was not found in sentence:')
+                print(deps_just_tokens[sent_id])
+            pt['arg_head_idx'] = head_idx
+
+    return # modified in place?
 
 
 def top_ten_logreg(clf, names):
@@ -331,7 +489,8 @@ def get_nltk_sents(sent_ids):
 
 
 def get_dependencies(sent_ids):
-    dependencies = {}
+    deps = {}
+    deps_just_tokens = {}
 
     def parse_id(sent_id):
         return sent_id.split('_')
@@ -345,16 +504,41 @@ def get_dependencies(sent_ids):
     mrg_ids = [parse_id(sid)[0] for sid in sent_ids]
 
     conllus = {}
+    conllus_just_tokens = {}
     for mrg_id in tqdm(mrg_ids, desc="Getting conllus"):
         path = os.path.join(CONLLU_DIR, mrg_id[:2], f'WSJ_{mrg_id}.conllu')
-        sents = conllu_to_sents(path)
-        conllus[mrg_id] = sents
+        sents_everything, sents_just_tokens = conllu_to_sents(path)
+        conllus[mrg_id] = sents_everything 
+        conllus_just_tokens[mrg_id] = sents_just_tokens
 
     for sent_id in sent_ids:
         mrg_id, sent_num = parse_id(sent_id)
-        dependencies[sent_id] = conllus[mrg_id][int(sent_num)]
+        deps[sent_id] = conllus[mrg_id][int(sent_num)]
+        deps_just_tokens[sent_id] = conllus_just_tokens[mrg_id][int(sent_num)]
 
-    return dependencies
+    return deps, deps_just_tokens
+
+
+def build_dicts(deps_just_tokens, sent_ids=None, glove_vocab=None):
+    word = set() 
+    #for sent_id, sent in deps_just_tokens.items():
+    #    if sent_id in sent_ids['train']:
+    #        for token in sent:
+    #            if word in glove_vocab:
+    #            word.add(sent)
+    word = sorted(glove_vocab)
+
+    w2i = defaultdict(lambda : len(w2i))
+    i2w = dict()
+
+    i2w[w2i[PAD_TOKEN]] = PAD_TOKEN
+    i2w[w2i[UNK_TOKEN]] = UNK_TOKEN
+    #i2w[w2i[ROOT_TOKEN]] = ROOT_TOKEN
+
+    for w in word:
+        i2w[w2i[w]] = w
+
+    return dict(w2i), i2w
 
 
 def build_instance_list(df):
@@ -369,7 +553,7 @@ def build_instance_list(df):
     properties = list(set(df['Property'].tolist()))
     possible = {split:{p:0 for p in properties} for split in ['train', 'dev']}
 
-    for _, x in tqdm(df.iterrows(), desc='Processing proto-role data entries:'):
+    for _, x in tqdm(df.iterrows(), desc='Building instances list'):
         idstr = [x['Sentence.ID'], x['Pred.Token'], x['Arg'], x['Arg.Pos']]
         idstr = '_'.join([str(n) for n in idstr])
 
@@ -405,11 +589,13 @@ def build_instance_list(df):
     return instances, possible
 
 
-def w2e_from_file(emb_file):
+def w2e_from_file(emb_file, vocab=None):
     w2e = {}
+    glove_vocab = []
 
     print(f'Building w2e from file: {emb_file}')
 
+    # XXX Random would be better?
     unk = [0.] * 100
 
     with open(emb_file, 'r', errors='ignore') as f:
@@ -419,15 +605,18 @@ def w2e_from_file(emb_file):
             lines.pop(0)
 
         for i, line in tqdm(enumerate(lines), ascii=True, desc=f'w2e Progress', ncols=80):
-            if i >= 1000000:
-                break
+            #if i >= 1000000:
+            #    break
             line = line.split()
             word = line[0].lower()
+            if word not in vocab:
+                continue
             try:
                 word_vector = [float(value) for value in line[1:]]
                 w2e[word] = np.array(word_vector)
+                glove_vocab.append(word)
             except Exception:
                 print(f'Word is: {word}, line is {i}')
 
-    return w2e
+    return w2e 
 

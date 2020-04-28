@@ -4,16 +4,16 @@ def get_args():
     parser = ArgumentParser()
 
     # Could probably collapse these all into one args.init list
-    parser.add_argument('-ii', help='Initialize proto-role data?',
-            action='store_true', dest='init_instances')
-    parser.add_argument('-is', help='Initialize sentence data (NLTK)?',
-            action='store_true', dest='init_sents')
-    parser.add_argument('-ig', help='Initialize glove data?',
-            action='store_true', dest='init_glove')
-    parser.add_argument('-id', help='Initialize dependency data?',
-            action='store_true', dest='init_deps')
-    parser.add_argument('-ad', help='Add preds and args??',
-            action='store_true', dest='add_pred_args')
+    parser.add_argument('-i', help='What shall we initialize?', dest='init_list',
+            nargs='+') # sents, deps, instances, glove, dicts
+
+    parser.add_argument('-apa', help='Add predicate and arg tokens, and arg\
+            indices to proto_instances?',
+            action='store_true', dest='add_pred_args')    
+
+    parser.add_argument('-pp', help='Print counts of positive instances for\
+            each property?',
+            action='store_true', dest='print_possible')    
 
     #parser.add_argument('model', help='Name of model', default='dummyname')
     parser.add_argument('-seed', type=int, dest='seed', default=7)
@@ -30,6 +30,8 @@ def get_args():
             default=50)
     parser.add_argument('-h1', help='Hidden size.', type=int, dest='h_size',
             default=100)
+    parser.add_argument('-gd', help='Dimension of glove embs.', type=str,
+            dest='glove_d', default='100')
 
     parser.add_argument('-epochs', help='Number of epochs in training.',
             type=int, default=1)
