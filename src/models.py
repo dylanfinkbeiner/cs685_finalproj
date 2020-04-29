@@ -75,6 +75,8 @@ class LSTM(nn.Module):
             properties=None):
         super(LSTM, self).__init__()
 
+        self.n_properties=len(properties)
+
         self.word_emb = nn.Embedding(
                 vocab_size,
                 emb_size,
@@ -92,21 +94,20 @@ class LSTM(nn.Module):
                 bias=True)
 
         #self.mlps = {p: nn.Linear(2 * h_size, 2) for p in PROPERTIES}
-        self.mlp = nn.Linear(2*h_size*len(properties), 2)
+        self.mlp = nn.Linear(2*h_size*self.n_properties, self.n_properties)
 
 
-    def forward(self, inputs, sent_lens, heads):
+    def forward(self, sents, sent_lens, preds, heads):
 
         # Sort the sentences so that the LSTM can process properly
         lens_sorted = sent_lens
-        words_sorted = inputs
+        words_sorted = sents
         indices = None
-        if(len(inputs) > 1):
+        if(len(sents) > 1):
             lens_sorted, indices = torch.sort(lens_sorted, descending=True)
-            indices = indices
             words_sorted = words_sorted.index_select(0, indices)
 
-        w_embs = self.word_emb(inputs)
+        w_embs = self.word_emb(sents)
 
         packed_lstm_input = pack_padded_sequence(
                 w_embs, lens_sorted, batch_first=True)
@@ -118,25 +119,35 @@ class LSTM(nn.Module):
         if len(outputs) > 1:
             outputs = unsort(outputs, indices)
 
-        # outputs : (B, L, h_size)
-        preds = outputs[:, preds] # expecting (B, 1, h_size) or (B, h_size)
-        heads = outputs[:, heads] # same as above
+        # outputs : (B, L, h_size), assuming preds (B)
+        B, L, h_size = outputs.shape
+        pred_reps = outputs[np.arange(B), preds] # expecting (B, h_size)
+        head_reps = outputs[np.arange(B), heads] # same as above
 
         # Get pred-arg representation
-        mlp_input = torch.cat([preds, heads], dim=-1) # (B, 2*h_size)
+        mlp_input = torch.cat([pred_reps, head_reps], dim=-1) # (B, 2*h_size)
 
-        logits = {p: None for p in PROPERTIES}
-        for p in PROPERTIES:
-            logits[p] = self.mlps[p](mlp_input)
+        #logits = {p: None for p in PROPERTIES}
+        #for p in PROPERTIES:
+        #    logits[p] = self.mlps[p](mlp_input)
+
+        mlp_input = mlp_input.repeat(1, self.n_properties) # Don't repeat on axis 0, 
+        logits = self.mlp(mlp_input) # (B, properties)
 
         return logits
 
 
         
-    def predict(self, inputs, sent_lens, heads):
+    def predict(self, sents, sent_lens, preds, heads):
 
-        logits = self.forward(inputs, sent_lesn, heads)
-        preds = argmax(logits, -1) # assuming logits a (num_props X 2) array
+        logits = self.forward(sents, sent_lens, preds, heads)
+        preds = ((logits.sign() + 1) / 2).long()
+        #preds = F.sigmoid(logits)
+        #preds = argmax(logits, -1) # assuming logits a (num_props X 2) array
 
         return preds
  
+def unsort(batch, indices):
+    indices_inverted = torch.argsort(indices)
+    batch = batch.index_select(0, indices_inverted)
+    return batch

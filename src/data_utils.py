@@ -14,7 +14,7 @@ import numpy as np
 from names import *
 
 
-class Conll_Token():
+class Conllu_Token():
     def __init__(self, line):
         self.word = line[1]
         self.pos = line[4]
@@ -46,7 +46,7 @@ def conllu_to_sents(conllu_file: str):
     sents_just_tokens = []
     for i, s in enumerate(sents_everything):
         s_split = [line.rstrip().split('\t') for line in s] # list of lists
-        s_split = [Conll_Token(line) for line in s_split] #
+        s_split = [Conllu_Token(line) for line in s_split] #
 
         sents_everything[i] = s_split
         sents_just_tokens.append([(x.word).lower() for x in s_split])
@@ -64,7 +64,7 @@ def match_conllu_to_raw(raw, dependencies):
             if token != dep.word and token != dep.pos and (not '/' in token):
                 dependencies[sent_id].insert(i, token)
                 for j, t in enumerate(dependencies[sent_id]):
-                    if type(t) == Conll_Token and t.head >= i:
+                    if type(t) == Conllu_Token and t.head >= i:
                         dependencies[sent_id][j].head += 1
 
 # point of this function is to get pred and arg indices into raw tokens to
@@ -74,16 +74,18 @@ def match_raw_to_conllu(proto_instances, raw, deps_just_tokens):
     for split in SPLITS:
         all_instances.extend(proto_instances[split])
 
-    all_instances = {x['Sentence.ID']: x for x in all_instances}
+    # Cheesy
+    #sid_to_instances = {sent_id: [] for sent_id in raw.keys()}
+    #for pt in all_instances:
+    #    sid_to_instances[pt['Sentence.ID']].append(pt)
 
     def lowered(token_seq):
         return [t.lower() for t in token_seq]
 
-    sent_ids = raw.keys()
-
-    for sent_id, raw_ptb in tqdm(raw.items(), desc='Matching raw to Conllu'):
+    for pt in tqdm(all_instances, desc='Matching raw to Conllu'):
+        sent_id = pt['Sentence.ID']
         deps_sent = deps_just_tokens[sent_id]
-        pt = all_instances[sent_id] # instance data point
+        raw_ptb = list(raw[sent_id])
         pred_idx = pt['Pred.Token']
         arg_idxs = pt['arg_indices']
         new_pred_idx = pred_idx # Just making copies
@@ -126,14 +128,15 @@ def match_raw_to_conllu(proto_instances, raw, deps_just_tokens):
         pt['Pred.Token'] = new_pred_idx 
         pt['arg_indices'] = new_arg_idxs
 
-
-    updated_instances = {split: list() for split in SPLITS}
-    for pt in all_instances.values():
-        updated_instances[pt['Split']].append(pt)
+    #updated_instances = {split: list() for split in SPLITS}
+    #for pt in all_instances:
+    #    updated_instances[pt['Split']].append(pt)
+    #breakpoint()
 
     # We only modified the proto_instances, but we should check to see that
     # this in-place modification holds after the function is finished
-    return updated_instances
+    #return updated_instances
+    return
 
 
 
@@ -268,7 +271,7 @@ def get_ins_outs(args, data_points, properties=None, sents=None, w2e=None) -> Tu
                     arg_idx = pt['arg_indices']
                     arg_rel = None
                     for idx in arg_idx:
-                        if type(dep[idx]) == Conll_Token:
+                        if type(dep[idx]) == Conllu_Token:
                             if dep[idx].head == pred_idx + 1:
                                 #X_d['arg_rel'] = dep[idx].rel
                                 if dep[idx].rel in acceptable_rels:
@@ -294,8 +297,8 @@ def get_ins_outs_lstm(instances, numericalized):
     y = []
 
     for pt in instances:
-        pred_idx, head_idx = pt['Pred.Token'], pt['arg_head_idx']
-        curr_x = (numericalized[pt['Sentence.ID']], (pred_idx, head_idx))
+        pred_idx, head_idx = pt['Pred.Token'], pt['arg_head_idx'] # ints
+        curr_x = (numericalized[pt['Sentence.ID']], (pred_idx, head_idx)) # np array of ints
         X.append(curr_x)
         y.append(np.array([pt[p]['binary'] for p in PROPERTIES]))
 

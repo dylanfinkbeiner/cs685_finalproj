@@ -154,8 +154,10 @@ def get_data(args):
     if args.model_type != 'lstm':
         data_utils.match_conllu_to_raw(sents['raw'], deps)
     else:
-        proto_instances = data_utils.match_raw_to_conllu(
+        data_utils.match_raw_to_conllu(
                 proto_instances, sents['raw'], deps_just_tokens)
+        #proto_instances = data_utils.match_raw_to_conllu(
+        #        proto_instances, sents['raw'], deps_just_tokens)
 
     # Word embedding data
     sent_ids = {} # Redefining sent_ids for this section
@@ -303,7 +305,6 @@ if __name__ == '__main__':
                 properties=PROPERTIES)
 
         print('Finished building lstm model!')
-        breakpoint()
 
 
     elif args.model_type == 'logreg':
@@ -358,7 +359,7 @@ if __name__ == '__main__':
                 penalty='l2',
                 properties=PROPERTIES)
 
-    metrics = train.train(args, model, X, y, PROPERTIES)
+    metrics = train.train(args, model, X, y)
 
     array = []
     for k, v in metrics.items():
