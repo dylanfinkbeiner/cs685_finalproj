@@ -111,69 +111,111 @@ def get_data(args):
     # Sentences
     sent_ids = set(df['Sentence.ID'].tolist())
     print(f'There are {len(sent_ids)} unique sentences.')
-    path = os.path.join(PICKLED_DIR, 'sents.pkl')
+    sents_path = os.path.join(PICKLED_DIR, 'sents.pkl')
     sents = None
-    if os.path.exists(path) and not 'sents' in args.init_list:
-        with open(path, 'rb') as f:
+    if os.path.exists(sents_path) and not 'sents' in args.init_list:
+        with open(sents_path, 'rb') as f:
             sents = pickle.load(f)
     else:
-        with open(path, 'wb') as f:
+        with open(sents_path, 'wb') as f:
             sents = data_utils.get_nltk_sents(sent_ids)
             pickle.dump(sents, f)
 
     # Dependency data
-    path = os.path.join(PICKLED_DIR, 'dependencies.pkl')
-    if os.path.exists(path) and not 'deps' in args.init_list:
-        with open(path, 'rb') as f:
+    dependencies_path = os.path.join(PICKLED_DIR, 'dependencies.pkl')
+    if os.path.exists(dependencies_path) and not 'deps' in args.init_list:
+        with open(dependencies_path, 'rb') as f:
             deps, deps_just_tokens = pickle.load(f)
     else:
-        with open(path, 'wb') as f:
-            #sent_ids = list(sents['raw'].keys())
+        with open(dependencies_path, 'wb') as f:
             deps, deps_just_tokens = data_utils.get_dependencies(sent_ids)
             pickle.dump((deps, deps_just_tokens), f)
     sents['dependencies'] = deps
     sents['deps_just_tokens'] = deps_just_tokens
 
     # Instances
-    path = os.path.join(PICKLED_DIR, 'instances.pkl')
+    instances_path = os.path.join(PICKLED_DIR, 'instances.pkl')
     proto_instances = None
     possible = None # Data to compare to SPRL paper
-    if os.path.exists(path) and not 'instances' in args.init_list:
-        with open(path, 'rb') as f:
+    if os.path.exists(instances_path) and not 'instances' in args.init_list:
+        with open(instances_path, 'rb') as f:
             proto_instances, possible = pickle.load(f)
     else:
         proto_instances, possible = data_utils.build_instance_list(df)
-        with open(path, 'wb') as f:
-            pickle.dump((proto_instances, possible), f)
-    if args.add_pred_args:
         data_utils.add_pred_args(proto_instances, sents['trees'])
-        with open(path, 'wb') as f:
+        with open(instances_path, 'wb') as f:
             pickle.dump((proto_instances, possible), f)
 
     # Matching between raw and dependency data
     if args.model_type != 'lstm':
         data_utils.match_conllu_to_raw(sents['raw'], deps)
+        # no corresponding overwrite here since running logreg on local machine
     else:
         data_utils.match_raw_to_conllu(
                 proto_instances, sents['raw'], deps_just_tokens)
-        #proto_instances = data_utils.match_raw_to_conllu(
-        #        proto_instances, sents['raw'], deps_just_tokens)
+        with open(instances_path, 'wb') as f:
+            pickle.dump((proto_instances, possible), f)
 
     # Word embedding data
     sent_ids = {} # Redefining sent_ids for this section
     for split in SPLITS:
         sent_ids[split] = [pt['Sentence.ID'] for pt in proto_instances[split]]
     w2e = None
-    path = os.path.join(PICKLED_DIR, f'glove_{args.glove_d}.pkl')
-    if os.path.exists(path) and not 'glove' in args.init_list:
-        with open(path, 'rb') as f:
+    glove_path = os.path.join(PICKLED_DIR, f'glove_{args.glove_d}.pkl')
+    if os.path.exists(glove_path) and not 'glove' in args.init_list:
+        with open(glove_path, 'rb') as f:
             w2e = pickle.load(f)
     else:
         vocab = data_utils.get_vocabulary(deps_just_tokens)
         w2e = data_utils.w2e_from_file(
                 GLOVE_FILE[args.glove_d], vocab=vocab)
-        with open(path, 'wb') as f:
+        with open(glove_path, 'wb') as f:
             pickle.dump(w2e, f)
+
+    w2i, i2w = None, None
+    emb_np = None
+    X, y = None, None
+    if args.model_type == 'lstm':
+        dicts_path = os.path.join(PICKLED_DIR, 'dicts.pkl')
+        if os.path.exists(dicts_path) and not 'dicts' in args.init_list:
+            with open(dicts_path, 'rb') as f:
+                w2i, i2w = pickle.load(f)
+        else:
+            w2i, i2w = data_utils.build_dicts(
+                    sents['deps_just_tokens'],
+                    sent_ids=sent_ids,
+                    glove_vocab=sorted(list(w2e.keys())))
+            with open(dicts_path, 'wb') as f:
+                pickle.dump((w2i, i2w), f)
+        
+        emb_np_path = os.path.join(PICKLED_DIR, 'emb_np.pkl')
+        if os.path.exists(emb_np_path) and not 'emb_np' in args.init_list:
+            with open(emb_np_path, 'rb') as f:
+                emb_np = pickle.load(f)
+        else:
+            emb_np = data_utils.build_emb_np(w2e, w2i=w2i, i2w=i2w)
+            with open(emb_np_path, 'wb') as f:
+                pickle.dump(emb_np, f)
+        
+        lstm_data_path = os.path.join(PICKLED_DIR, 'lstm_data.pkl')
+        if os.path.exists(lstm_data_path) and not 'lstm_data' in args.init_list:
+            with open(lstm_data_path, 'rb') as f:
+                X, y = pickle.load(f)
+        else:
+            # Proto instances modified in-place here
+            data_utils.get_arg_head_idx(proto_instances, sents['dependencies'],
+                    sents['deps_just_tokens'])
+            with open(instances_path, 'wb') as f:
+                pickle.dump((proto_instances, possible), f)
+
+            numericalized = data_utils.numericalize(sents['deps_just_tokens'], w2i)
+            X = {}
+            y = {}
+            for split in SPLITS:
+                X[split], y[split] = data_utils.get_ins_outs_lstm(
+                        proto_instances[split], numericalized)
+            with open(lstm_data_path, 'wb') as f:
+                pickle.dump((X, y), f)
 
 
     num_instances = sum([len(x) for x in proto_instances.values()])
@@ -184,7 +226,10 @@ def get_data(args):
             'possible': possible,
             'sents': sents,
             'w2e': w2e,
-            'sent_ids': sent_ids}
+            'sent_ids': sent_ids,
+            'lstm_data': (X,y),
+            'dicts': (w2i, i2w),
+            'emb_np': emb_np}
 
 
 
@@ -199,6 +244,8 @@ if __name__ == '__main__':
     sents = data['sents']
     w2e = data['w2e']
     sent_ids = data['sent_ids']
+    breakpoint()
+    exit()
 
     # Analyze POS tags of predicate verbs of proto role dataset
     #tagged = sents['tagged']
@@ -270,31 +317,9 @@ if __name__ == '__main__':
             with open(model_path, 'wb') as f:
                 pickle.dump(model, f)
     elif args.model_type == 'lstm':
-
-        dicts_path = os.path.join(PICKLED_DIR, 'dicts.pkl')
-        if os.path.exists(dicts_path) and not 'dicts' in args.init_list:
-            with open(dicts_path, 'rb') as f:
-                w2i, i2w = pickle.load(f)
-        else:
-            w2i, i2w = data_utils.build_dicts(
-                    sents['deps_just_tokens'],
-                    sent_ids=sent_ids,
-                    glove_vocab=sorted(list(w2e.keys())))
-            with open(dicts_path, 'wb') as f:
-                pickle.dump((w2i, i2w), f)
-
-        emb_np = data_utils.build_emb_np(w2e, w2i=w2i, i2w=i2w)
-
-        # Proto instances modified in-place here
-        data_utils.get_arg_head_idx(proto_instances, sents['dependencies'],
-                sents['deps_just_tokens'])
-
-        numericalized = data_utils.numericalize(sents['deps_just_tokens'], w2i)
-        X = {}
-        y = {}
-        for split in SPLITS:
-            X[split], y[split] = data_utils.get_ins_outs_lstm(
-                    proto_instances[split], numericalized)
+        w2i, i2w = data['dicts']
+        emb_np = data['emb_np']
+        X, y = data['lstm_data']
 
         model = models.LSTM(
                 vocab_size=len(w2i),
